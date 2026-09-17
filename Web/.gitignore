@@ -1,0 +1,59 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+
+# build output
+frontend/dist/
+dist/
+*.tsbuildinfo
+
+# database (regenerated + seeded on first run)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+# the push signing key generated on first boot; a deployment sets it in env
+data/vapid.json
+
+# uploaded prescriptions and reports — patient data, never committed
+data/uploads/
+
+# environment
+.env
+.env.local
+frontend/.env.local
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
+
+# APKs are build artifacts (npm run apk in frontend/ and guardian-app/)
+public/downloads/*.apk
+
+# Python local environments / caches
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# seeded design canvases are published artifacts, not source
+design/**/*.html
+!design/**/*.dc.html
+
+# python virtualenv for the risk model service
+ml-service/.venv/
+ml-service/__pycache__/
+ml-service/.pytest_cache/
+
+# the Android app: the bundle it wraps, and Gradle's output
+frontend/dist-native/
+frontend/android/local.properties
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/capacitor-cordova-android-plugins/build/
+frontend/android/.gradle/
