@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- a solid bell for the status bar: Android draws these in white on transparent, tiny -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M12 2a6.5 6.5 0 0 0-6.5 6.5V13l-2 3.5h17L18.5 13V8.5A6.5 6.5 0 0 0 12 2z" android:fillColor="#FFFFFFFF" />
+    <path android:pathData="M9.5 18.5a2.5 2.5 0 0 0 5 0z" android:fillColor="#FFFFFFFF" />
+</vector>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Two cells high by four wide to begin with (the week, a message and the
+    next reminder), resizable down to one row (just the message) and up to
+    three or more (adds the reading). Redrawn every half hour, the minimum
+    Android allows, so the message moves through the day; the app redraws
+    it too whenever it has fresh data.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="140dp"
+    android:minResizeHeight="40dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_maternalcare"
+    android:previewLayout="@layout/widget_maternalcare"
+    android:description="@string/widget_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
