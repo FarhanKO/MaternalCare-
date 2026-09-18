@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MaternalCare+</string>
+    <string name="title_activity_main">MaternalCare+</string>
+    <string name="package_name">plus.maternalcare.app</string>
+    <string name="custom_url_scheme">plus.maternalcare.app</string>
+</resources>

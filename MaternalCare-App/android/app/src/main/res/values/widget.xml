@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_label">MaternalCare+</string>
+    <string name="widget_description">Your week, a small message, and what is coming up next.</string>
+    <string name="widget_empty">Open MaternalCare+ once and your week will appear here.</string>
+
+    <color name="widget_ink">#0D1526</color>
+    <color name="widget_soft">#3D4763</color>
+
+    <!-- Android 12 rounds every widget to the launcher radius; older versions get ours -->
+    <dimen name="widget_radius">24dp</dimen>
+</resources>
