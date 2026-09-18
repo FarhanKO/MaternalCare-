@@ -1,0 +1,12 @@
+{
+	"appId": "plus.maternalcare.app",
+	"appName": "MaternalCare+",
+	"webDir": "C:\\Users\\Farhan\\Downloads\\MaternalCare-Webapp/frontend/dist-native",
+	"android": {
+		"allowMixedContent": true
+	},
+	"server": {
+		"androidScheme": "https",
+		"cleartext": true
+	}
+}
