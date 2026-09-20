@@ -7,7 +7,7 @@ them how she is doing, what she may be struggling with and what they can do
 about it — and the moment she presses SOS, it takes over their phone with a
 full-volume alarm, her location and a route to her.
 
-App: .../blob/main/Guardian-App/main-app/guardian.apk
+App: https://github.com/FarhanKO/MaternalCare-/tree/main/Guardian-App/main-app
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/a83fe6de-3089-4a6b-8afd-dd7e2d8bd7a6" width="230" alt="The guardian's dashboard: her week, her latest readings, and what to do about them">
