@@ -50,8 +50,7 @@ notes — only what helps them help her.
 | **Call 999** | A `tel:` link to her configured emergency number. | `emergencyNumber` from her SOS settings. |
 
 <p align="center">
-  <img src="<img width="720" height="1604" alt="guardian-sos" src="https://github.com/user-attachments/assets/f72c68ac-5ae8-446b-b6ad-876d2bfd374a" />
-https://github.com/user-attachments/assets/7867d980-e5fe-41a5-b3e2-42892d0a921a" width="300" alt="The full guardian dashboard, top to bottom">
+  <img src="https://github.com/user-attachments/assets/f72c68ac-5ae8-446b-b6ad-876d2bfd374a">
 </p>
 
 ## How the SOS reaches them, end to end
