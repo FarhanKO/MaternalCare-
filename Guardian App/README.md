@@ -50,7 +50,7 @@ notes — only what helps them help her.
 | **Call 999** | A `tel:` link to her configured emergency number. | `emergencyNumber` from her SOS settings. |
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/f72c68ac-5ae8-446b-b6ad-876d2bfd374a">
+  <img src="https://github.com/user-attachments/assets/910138ce-8f64-4260-aff1-9ebf0241f7a5" width="300" alt="The full guardian dashboard, top to bottom">
 </p>
 
 ## How the SOS reaches them, end to end
@@ -78,9 +78,9 @@ notes — only what helps them help her.
 The SOS screen itself:
 
 <p align="center">
-  <img src="../docs/screenshots/apk/guardian-sos.png" width="230" alt="The SOS takeover screen inside the app">
-  <img src="../docs/screenshots/guardian/sos-acknowledged.png" width="230" alt="After tapping I'm on my way">
-  <img src="../docs/screenshots/web/mother-sos.png" width="420" alt="The mother's side: the SOS dialog on the site, with the guardian-app links">
+  <img src="https://github.com/user-attachments/assets/99a6d67f-2493-4fce-8d03-80e9268c9b67" width="230" alt="The SOS takeover screen inside the app">
+  <img src="https://github.com/user-attachments/assets/83a1570d-fd32-4add-911e-7c140bb62695" width="230" alt="After tapping I'm on my way">
+  <img src="https://github.com/user-attachments/assets/d75eb3a3-e50a-4883-a9d2-ffbeacaf83e4" width="420" alt="The mother's side: the SOS dialog on the site, with the guardian-app links">
 </p>
 
 - **It takes the whole screen.** A pulsing full-bleed red that cannot be
@@ -129,8 +129,8 @@ maternalcare://guardian/?t=<token>&api=<http://host:3000/api>
   mother's SOS screen shows as *Android ready* / paired.
 
 <p align="center">
-  <img src="../docs/screenshots/apk/guardian-pair.png" width="230" alt="The pairing screen, waiting for a link or code">
-  <img src="../docs/screenshots/guardian/pair.png" width="230" alt="The same screen in a browser">
+  <img src="https://github.com/user-attachments/assets/910db541-e04a-46a7-8f00-11f4366f643a" width="230" alt="The pairing screen, waiting for a link or code">
+  <img src="https://github.com/user-attachments/assets/b9321d2c-e86d-4797-b995-f4613cbf108b" width="230" alt="The same screen in a browser">
 </p>
 
 The browser companion (PWA) lives at
