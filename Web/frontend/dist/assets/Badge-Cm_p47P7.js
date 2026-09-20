@@ -1,1 +1,0 @@
-import{j as s,d as a}from"./index-JSp7Ugb5.js";function d({children:r,className:t,icon:e}){return s.jsxs("span",{className:a("inline-flex items-center gap-1.5 rounded-full border border-white/60 bg-white/60 px-3 py-1","text-xs font-semibold text-brand-700 backdrop-blur-md shadow-soft",t),children:[e&&s.jsx("span",{className:"text-brand-500",children:e}),r]})}export{d as B};
