@@ -1,0 +1,1 @@
+import{g as s,j as m}from"./index-JSp7Ugb5.js";import{r as p}from"./motion-BpV5xTTS.js";function x({children:i,className:t,delay:r=0,variants:n=p,once:o=!0,as:e="div"}){const a=s[e];return m.jsx(a,{className:t,variants:n,initial:"hidden",whileInView:"visible",viewport:{once:o,margin:"-80px"},transition:{delay:r},children:i})}export{x as R};
