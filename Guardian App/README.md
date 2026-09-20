@@ -8,9 +8,9 @@ about it — and the moment she presses SOS, it takes over their phone with a
 full-volume alarm, her location and a route to her.
 
 <p align="center">
-  <img src="../docs/screenshots/apk/guardian-dashboard.png" width="230" alt="The guardian's dashboard: her week, her latest readings, and what to do about them">
-  <img src="../docs/screenshots/apk/guardian-capabilities.png" width="230" alt="Guidance cards and the honest per-phone capability list">
-  <img src="../docs/screenshots/apk/guardian-alarm-lockscreen.png" width="230" alt="The SOS alarm waking a sleeping phone through a full-screen intent">
+  <img src="https://github.com/user-attachments/assets/a83fe6de-3089-4a6b-8afd-dd7e2d8bd7a6" width="230" alt="The guardian's dashboard: her week, her latest readings, and what to do about them">
+  <img src="https://github.com/user-attachments/assets/daef171e-98fc-4883-ab5c-8c7aec0be718" width="230" alt="Guidance cards and the honest per-phone capability list">
+  <img src="https://github.com/user-attachments/assets/d1bd794d-8653-4559-91f2-a9231f6feb57" width="230" alt="The SOS alarm waking a sleeping phone through a full-screen intent">
 </p>
 <p align="center"><sub>Real screenshots from the built APK (<code>public/downloads/guardian.apk</code>) on an Android 17 emulator, paired to a local server.</sub></p>
 
@@ -50,7 +50,8 @@ notes — only what helps them help her.
 | **Call 999** | A `tel:` link to her configured emergency number. | `emergencyNumber` from her SOS settings. |
 
 <p align="center">
-  <img src="../docs/screenshots/guardian/dashboard-full.png" width="300" alt="The full guardian dashboard, top to bottom">
+  <img src="<img width="720" height="1604" alt="guardian-sos" src="https://github.com/user-attachments/assets/f72c68ac-5ae8-446b-b6ad-876d2bfd374a" />
+https://github.com/user-attachments/assets/7867d980-e5fe-41a5-b3e2-42892d0a921a" width="300" alt="The full guardian dashboard, top to bottom">
 </p>
 
 ## How the SOS reaches them, end to end
@@ -134,7 +135,7 @@ maternalcare://guardian/?t=<token>&api=<http://host:3000/api>
 </p>
 
 The browser companion (PWA) lives at
-`http://<host>:3000/guardian-app/?t=<token>&api=<…>` once the bundle has been
+`<img width="720" height="1604" alt="guardian-sos" src="https://github.com/user-attachments/assets/6c6e52ab-0c02-47fa-9faf-8aee22c6afe8" />://<host>:3000/guardian-app/?t=<token>&api=<…>` once the bundle has been
 built; on iPhone it is added to the Home Screen with **Share → Add to Home
 Screen**.
 
