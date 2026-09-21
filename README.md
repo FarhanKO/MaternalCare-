@@ -2,7 +2,6 @@
 
 **A maternal & child health platform — for the mother, her doctor, and the
 people beside her.**
-CSE470 Software Engineering · Summer 2026 · Section 2
 
 Pregnancy tracking, symptom journalling with voice input, appointments &
 reminders, maternal vitals with automated alerts, WHO child-growth curves,
