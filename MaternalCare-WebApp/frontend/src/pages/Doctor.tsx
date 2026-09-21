@@ -1,0 +1,1042 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Activity, AlertTriangle, ArrowRight, BellRing, CalendarDays, CheckCircle2, ChevronRight,
+  ClipboardList, ClipboardPlus, Clock, FolderOpen, HeartPulse, Inbox, LayoutDashboard, Search,
+  ShieldAlert,
+  TrendingUp, Users, X,
+} from 'lucide-react';
+import {
+  Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
+} from 'recharts';
+import { Navbar } from '@/components/landing/Navbar';
+import { Footer } from '@/components/landing/Footer';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { Reveal } from '@/components/ui/Reveal';
+import { SectionDock, type DockItem } from '@/components/ui/SectionDock';
+import { DoctorProfile } from '@/components/doctor/DoctorProfile';
+import { AssignModal } from '@/components/doctor/AssignModal';
+import { RequestInbox } from '@/components/doctor/RequestInbox';
+import { MessageThreads } from '@/components/doctor/MessageThreads';
+import { KpiModal, type KpiKey } from '@/components/doctor/KpiModal';
+import { BeamsBackground } from '@/components/ui/BeamsBackground';
+import { PatientFiles } from '@/components/doctor/PatientFiles';
+import { SosBanner } from '@/components/doctor/SosBanner';
+import { cn } from '@/lib/cn';
+import {
+  KIND_META, RISK_META,
+  type Alert, type Patient, type RiskLevel, type Slot,
+} from '@/data/doctor';
+import { api, type DoctorAnalytics } from '@/lib/api';
+import { ReportButton } from '@/components/ui/ReportButton';
+import { ModerationQueue } from '@/components/doctor/ModerationQueue';
+import { CareEndings } from '@/components/doctor/CareEndings';
+import { useAuth } from '@/lib/auth';
+import { greetingFor } from '@/lib/greeting';
+
+const P = { peach: '#fb7534', peachLight: '#ff9159', aqua: '#22b8c4', brand: '#3f66f0', mint: '#2fbf9b', rose: '#e5484d', violet: '#8b7bf3' };
+
+type DocTab = 'overview' | 'patients' | 'schedule' | 'requests' | 'moderation' | 'reports';
+
+const TABS: DockItem<DocTab>[] = [
+  { key: 'overview', label: 'Overview', icon: LayoutDashboard, hint: 'Clinic at a glance' },
+  { key: 'patients', label: 'Patients', icon: Users, hint: 'Your caseload' },
+  { key: 'schedule', label: 'Schedule', icon: CalendarDays, hint: 'Today’s clinic' },
+  { key: 'requests', label: 'Inbox', icon: Inbox, hint: 'Requests to be seen, and your conversations' },
+  { key: 'moderation', label: 'Moderation', icon: ShieldAlert, hint: 'Content mothers have reported' },
+  { key: 'reports', label: 'Reports', icon: ClipboardList, hint: 'Practice analytics' },
+];
+
+const axisTick = { fontSize: 11, fill: '#9aa3ba', fontWeight: 600 };
+
+/**
+ * How to address the signed-in clinician.
+ *
+ * The greeting used to read "Dr. Ortiz" for everybody, written into the
+ * markup — so every clinician who signed in was greeted as the one on the
+ * demo account, which also made the caseload below look hardcoded when it
+ * was not.
+ *
+ * Accounts are stored as "Dr. Lena Ortiz", so the title is stripped before
+ * the surname is taken and then put back. A name with no surname is used
+ * whole rather than truncated to nothing.
+ */
+function addressFor(name?: string | null) {
+  const clean = String(name ?? '').replace(/^\s*(dr\.?|prof\.?)\s+/i, '').trim();
+  if (!clean) return 'Doctor';
+  const parts = clean.split(/\s+/);
+  return `Dr. ${parts.length > 1 ? parts[parts.length - 1] : parts[0]}`;
+}
+
+function Tip({ active, payload, label, unit }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-2xl border border-white/70 bg-white/85 px-3.5 py-2.5 text-xs shadow-glass backdrop-blur-xl">
+      {label != null && <div className="mb-1 font-semibold text-ink-muted">{label}</div>}
+      {payload.map((p: any, i: number) => (
+        <div key={i} className="flex items-center gap-2 font-semibold text-ink">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.color || p.fill }} />
+          {p.name}: {p.value}{unit ? ` ${unit}` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Card({ title, sub, icon: Icon, tint = P.peach, right, children, className }: any) {
+  return (
+    <GlassCard className={cn('flex h-full flex-col p-5 sm:p-6', className)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-9 w-9 flex-none place-items-center rounded-xl" style={{ background: `${tint}1f`, color: tint }}>
+            <Icon className="h-[18px] w-[18px]" />
+          </span>
+          <div>
+            <div className="text-sm font-bold leading-tight text-ink">{title}</div>
+            {sub && <div className="text-xs text-ink-muted">{sub}</div>}
+          </div>
+        </div>
+        {right}
+      </div>
+      <div className="mt-4 flex-1">{children}</div>
+    </GlassCard>
+  );
+}
+
+/** Tiny inline sparkline for a patient's systolic trend. */
+function Spark({ values, color }: { values: number[]; color: string }) {
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => `${(i / (values.length - 1)) * 56},${18 - ((v - min) / span) * 14}`).join(' ');
+  return (
+    <svg viewBox="0 0 56 20" className="h-5 w-14 flex-none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RiskPill({ level }: { level: RiskLevel }) {
+  const m = RISK_META[level];
+  return (
+    <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', m.ring)}>{m.label}</span>
+  );
+}
+
+/* ---------------- patient detail drawer ---------------- */
+function PatientDrawer({ patient, onClose, onAssign }: { patient: Patient | null; onClose: () => void; onAssign: (p: Patient) => void }) {
+  /**
+   * The record opens on the summary, but paper is often the reason it was
+   * opened at all — so files get a pane of their own rather than a footnote
+   * below the fold.
+   */
+  const [pane, setPane] = useState<'overview' | 'files'>('overview');
+  const [fileCount, setFileCount] = useState<number | null>(null);
+
+  // a fresh patient starts on the summary, and its own count. The count is
+  // fetched here rather than left to the Files pane, so the tab and the
+  // shortcut can say "3 on record" before anyone opens them.
+  useEffect(() => {
+    setPane('overview');
+    setFileCount(null);
+    if (!patient) return undefined;
+    let cancelled = false;
+    api.getPatientDocuments(patient.id)
+      .then(({ documents }) => { if (!cancelled) setFileCount(documents.length); })
+      .catch(() => { if (!cancelled) setFileCount(null); });
+    return () => { cancelled = true; };
+  }, [patient?.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && patient && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [patient, onClose]);
+
+  return (
+    <AnimatePresence>
+      {patient && (
+        <motion.div
+          className="fixed inset-0 z-[100] flex justify-end"
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          exit={{ opacity: 0, pointerEvents: 'none', transition: { duration: 0.2 } }}
+          transition={{ duration: 0.2 }}
+        >
+          <motion.div
+            className="absolute inset-0 bg-ink/35"
+            onClick={onClose}
+            initial={{ opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' }}
+            animate={{ opacity: 1, backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          />
+          <motion.aside
+            role="dialog" aria-modal="true" aria-label={`${patient.name} record`}
+            initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%', transition: { duration: 0.22 } }}
+            transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+            className="glass-strong relative m-3 flex w-full max-w-md flex-col overflow-hidden rounded-4xl shadow-float"
+          >
+            <div className="relative h-24 flex-none overflow-hidden"
+              style={{ background: 'linear-gradient(140deg, #ff9159 0%, #fb7534 55%, #ea5c1d 100%)' }}>
+              <div className="pointer-events-none absolute -right-8 -top-12 h-36 w-36 rounded-full bg-white/25 blur-2xl" />
+              <button onClick={onClose} aria-label="Close record"
+                className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-xl border border-white/30 bg-white/20 text-white backdrop-blur-md transition hover:bg-white/30">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* relative + z-10 so the avatar sits above the positioned cover */}
+            <div className="relative z-10 flex-none px-6">
+              <div className="-mt-10">
+                <span className="grid h-[68px] w-[68px] place-items-center rounded-3xl border-[3px] border-white text-lg font-extrabold text-white shadow-glow"
+                  style={{ background: RISK_META[patient.risk].color }}>
+                  {patient.name.split(' ').map((w) => w[0]).slice(0, 2).join('')}
+                </span>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xl font-extrabold tracking-tight text-ink">{patient.name}</span>
+                  <RiskPill level={patient.risk} />
+                </div>
+                <div className="text-[11px] font-semibold text-ink-muted">
+                  {patient.age} yrs · week {patient.week} · {patient.bloodGroup}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-none gap-1.5 px-6">
+              {([
+                { key: 'overview' as const, label: 'Overview' },
+                { key: 'files' as const, label: 'Files' },
+              ]).map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setPane(t.key)}
+                  className={cn(
+                    'flex-1 rounded-2xl px-3 py-2 text-[12px] font-bold ring-1 transition',
+                    pane === t.key
+                      ? 'bg-peach-500/15 text-peach-700 ring-peach-500/25'
+                      : 'bg-white/60 text-ink-muted ring-transparent hover:text-ink',
+                  )}
+                >
+                  {t.label}
+                  {t.key === 'files' && fileCount !== null && (
+                    <span className="ml-1.5 font-semibold opacity-70">{fileCount}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {pane === 'files' ? (
+              <div className="flex-1 overflow-hidden px-6 pb-6 pt-4">
+                <PatientFiles
+                  patientId={patient.id}
+                  patientName={patient.name}
+                  onCount={setFileCount}
+                />
+              </div>
+            ) : (
+            <div className="flex-1 overflow-y-auto px-6 pb-6">
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                {[
+                  { l: 'BP', v: `${patient.bp.sys}/${patient.bp.dia}`, i: HeartPulse },
+                  { l: 'Score', v: `${patient.score}`, i: Activity },
+                  { l: 'Week', v: `${patient.week}`, i: CalendarDays },
+                ].map((s) => (
+                  <div key={s.l} className="rounded-2xl border border-white/60 bg-white/55 py-3 text-center">
+                    <s.i className="mx-auto h-3.5 w-3.5 text-ink-faint" />
+                    <div className="mt-1 text-sm font-extrabold leading-none text-ink">{s.v}</div>
+                    <div className="mt-1 text-[9px] font-bold uppercase tracking-wider text-ink-faint">{s.l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {patient.flags.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">Active flags</div>
+                  <div className="mt-2 space-y-1.5">
+                    {patient.flags.map((f) => (
+                      <div key={f} className="flex items-center gap-2 rounded-xl bg-amber-500/12 px-3 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-500/25">
+                        <AlertTriangle className="h-3.5 w-3.5 flex-none" />{f}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">Systolic trend</div>
+                <div className="mt-2 rounded-2xl border border-white/60 bg-white/55 p-3">
+                  <ResponsiveContainer width="100%" height={120}>
+                    <AreaChart data={patient.trend.map((v, i) => ({ v, i: `V${i + 1}` }))} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="ptTrend" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={RISK_META[patient.risk].color} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={RISK_META[patient.risk].color} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis dataKey="i" tickLine={false} axisLine={false} tick={axisTick} />
+                      <YAxis tickLine={false} axisLine={false} tick={axisTick} width={30} domain={['dataMin - 6', 'dataMax + 6']} />
+                      <Tooltip content={<Tip unit="mmHg" />} />
+                      <Area type="monotone" dataKey="v" name="Systolic" stroke={RISK_META[patient.risk].color} strokeWidth={2.4} fill="url(#ptTrend)" dot={{ r: 3 }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* the one line that must not be scrolled past */}
+              {patient.allergies && (
+                <div className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/12 px-3 py-2.5 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-500/25">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
+                  <span><span className="font-extrabold uppercase tracking-wide">Allergies · </span>{patient.allergies}</span>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">History</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {patient.conditions.map((c) => (
+                    <span key={c} className="rounded-full border border-white/60 bg-white/60 px-3 py-1 text-[11px] font-semibold text-ink-soft">{c}</span>
+                  ))}
+                  {patient.conditions.length === 0 && (patient.history ?? []).length === 0 && (
+                    <span className="text-[11px] font-medium text-ink-faint">Nothing recorded</span>
+                  )}
+                </div>
+                {/*
+                  What she told the questionnaire: first pregnancy, past
+                  complications, whether she was already under care, twins;
+                  for a new mother her mood and the baby's vaccinations; for
+                  a parent the child's growth and milestones. Asked at
+                  registration, stored, and until now shown to nobody.
+                */}
+                {(patient.history ?? []).length > 0 && (
+                  <div className="mt-2 divide-y divide-white/60 overflow-hidden rounded-2xl border border-white/60 bg-white/55">
+                    {patient.history.map((line) => (
+                      <div key={line.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <span className="text-[11px] font-semibold text-ink-muted">{line.label}</span>
+                        <span className={cn('text-right text-[12px] font-bold', line.tone === 'warn' ? 'text-amber-700' : 'text-ink')}>
+                          {line.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 text-center">
+                <div className="rounded-2xl border border-white/60 bg-white/55 px-3 py-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Last seen</div>
+                  <div className="text-[13px] font-bold text-ink">{patient.lastVisit}</div>
+                </div>
+                <div className="rounded-2xl border border-white/60 bg-white/55 px-3 py-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Next</div>
+                  <div className="text-[13px] font-bold text-ink">{patient.nextVisit}</div>
+                </div>
+              </div>
+
+              {/* a way through to the paper without hunting for the tab */}
+              <button
+                onClick={() => setPane('files')}
+                className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-white/60 bg-white/55 px-4 py-3 text-left transition hover:bg-white"
+              >
+                <span className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-peach-500/12 text-peach-700">
+                  <FolderOpen className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-bold text-ink">Prescriptions &amp; reports</span>
+                  <span className="block text-[11px] font-semibold text-ink-muted">
+                    {fileCount === null ? 'Open her filed documents'
+                      : fileCount === 0 ? 'Nothing filed yet'
+                        : `${fileCount} on record, newest first`}
+                  </span>
+                </span>
+                <ChevronRight className="h-4 w-4 flex-none text-ink-faint" />
+              </button>
+
+              {/* her whole record as one document, for the consultation */}
+              <ReportButton
+                patientId={patient.id}
+                patientName={patient.name}
+                variant="quiet"
+                label="Download health report"
+                className="mt-3 w-full"
+              />
+
+              <button
+                onClick={() => onAssign(patient)}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-peach-400 to-peach-600 px-5 py-3 text-sm font-bold text-white shadow-[0_10px_30px_-8px_rgba(234,92,29,0.5)] transition hover:brightness-105"
+              >
+                <ClipboardPlus className="h-[18px] w-[18px]" /> Assign test, medicine or appointment
+              </button>
+            </div>
+            )}
+          </motion.aside>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ================================ page ================================ */
+export function Doctor() {
+  const { user: account } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const urlTab = params.get('tab') as DocTab | null;
+  // read off TABS rather than a second hardcoded list, which is how
+  // ?tab=moderation silently fell back to the overview when the tab was added
+  const valid = (t: string | null): t is DocTab =>
+    !!t && TABS.some((x) => x.key === t);
+  const [tab, setTabState] = useState<DocTab>(valid(urlTab) ? urlTab : 'overview');
+  const setTab = (t: DocTab) => {
+    setTabState(t);
+    setParams(t === 'overview' ? {} : { tab: t }, { replace: true });
+  };
+  useEffect(() => { if (valid(urlTab) && urlTab !== tab) setTabState(urlTab); }, [urlTab]);
+  const [query, setQuery] = useState('');
+  const [riskFilter, setRiskFilter] = useState<'all' | RiskLevel>('all');
+  const [selected, setSelected] = useState<Patient | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  /** which overview number is expanded, if any */
+  const [kpi, setKpi] = useState<KpiKey | null>(null);
+
+  /*
+   * Practice analytics, counted server-side from this clinician's own
+   * caseload. The three charts below used to read fixtures: a trimester split
+   * claiming thirty-eight pregnancies against six that exist, a clinic week
+   * claiming sixty-one appointments seen against fourteen in the database,
+   * and screening completion rates for items the application never tracked.
+   */
+  const [analytics, setAnalytics] = useState<DoctorAnalytics | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getDoctorAnalytics()
+      .then((a) => { if (!cancelled) setAnalytics(a); })
+      .catch(() => { /* the cards show their empty state */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const trimesterSlices = analytics ? [
+    { name: 'First', value: analytics.trimesters.first, color: '#7fe3e8' },
+    { name: 'Second', value: analytics.trimesters.second, color: '#45cdd6' },
+    { name: 'Third', value: analytics.trimesters.third, color: '#0f97a6' },
+  ] : [];
+  const [assigning, setAssigning] = useState<Patient | null>(null);
+
+  /*
+   * The caseload, and only the caseload.
+   *
+   * This used to start as a fixed array of six invented patients and replace
+   * it only `if (p.length)` — so a clinician whose real caseload was empty,
+   * which is every clinician on the day they register, was shown six women
+   * who do not exist, complete with gestational weeks, risk levels and blood
+   * pressures. Nothing on screen said they were placeholders.
+   *
+   * It now starts empty and always takes what the server returns. `loaded`
+   * separates "no patients yet" from "we have not asked yet", so the empty
+   * state cannot flash before the first response arrives.
+   */
+  const [roster, setRoster] = useState<Patient[]>([]);
+  const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [rosterError, setRosterError] = useState(false);
+  const loadRoster = () => api.getPatients()
+    .then((p) => { setRoster(p); setRosterError(false); })
+    .catch(() => setRosterError(true))
+    .finally(() => setRosterLoaded(true));
+  useEffect(() => { loadRoster(); }, []);
+
+  // resolve our own doctors row so the request inbox reads the right diary
+  const [meDoctor, setMeDoctor] = useState<import('@/data/care').Doctor | null>(null);
+  const meId = meDoctor?.id ?? null;
+
+  /*
+   * The clinic diary, from the appointments table.
+   *
+   * The schedule below used to be a fixed array of six visits naming six
+   * invented women, shown identically to every clinician. It is now this
+   * doctor's own appointments for today.
+   */
+  const [appointments, setAppointments] = useState<import('@/data/care').Appointment[]>([]);
+  useEffect(() => {
+    if (!meId) return;
+    api.getDoctorRequests(meId).then(setAppointments).catch(() => setAppointments([]));
+  }, [meId]);
+
+  const nameById = useMemo(
+    () => new Map(roster.map((p) => [String(p.id), p.name])),
+    [roster],
+  );
+
+  /** Today's visits, in time order. */
+  const todaySlots = useMemo(() => {
+    const today = new Date();
+    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return appointments
+      .filter((a) => a.date === iso && a.status !== 'cancelled' && a.status !== 'declined')
+      .sort((a, b) => String(a.time ?? '').localeCompare(String(b.time ?? '')))
+      .map((a) => ({
+        id: a.id,
+        time: a.time || '—',
+        patient: nameById.get(String(a.patientId)) ?? 'Patient',
+        reason: a.reason || 'Consultation',
+        kind: (/urgent|pressure|bleed|pain|reduced/i.test(a.reason || '') ? 'urgent' : 'checkup') as Slot['kind'],
+        done: a.status === 'completed',
+      }));
+  }, [appointments, nameById]);
+
+  /*
+   * Open alerts, derived from the caseload rather than invented.
+   *
+   * Each one names a real patient of this clinician and the reading or
+   * symptom that raised it. A doctor with a quiet caseload sees none, which
+   * is the truthful answer and was previously impossible — the list was four
+   * fixed entries naming women who do not exist.
+   */
+  const alerts = useMemo<Alert[]>(() => roster.flatMap((p) => {
+    const out: Alert[] = [];
+    if (p.risk === 'high') {
+      out.push({
+        id: `r-${p.id}`, patient: p.name, severity: 'critical', ago: p.lastVisit || 'recently',
+        title: `Assessed high risk${p.week ? ` at week ${p.week}` : ''}`,
+        detail: `Latest blood pressure ${p.bp.sys}/${p.bp.dia}. Open her record for the readings behind the score.`,
+      });
+    }
+    (p.flags ?? []).forEach((f, i) => {
+      out.push({
+        id: `f-${p.id}-${i}`, patient: p.name,
+        severity: p.risk === 'high' ? 'critical' : 'warning',
+        ago: p.lastVisit || 'recently',
+        title: f,
+        detail: `Reported by ${p.name.split(' ')[0]} in her own log.`,
+      });
+    });
+    return out;
+  }), [roster]);
+  const [requestCount, setRequestCount] = useState(0);
+  const [messageUnread, setMessageUnread] = useState(0);
+  useEffect(() => {
+    api.getMyDoctor().then(setMeDoctor).catch(() => setMeDoctor(null));
+  }, []);
+
+  const riskCount = (level: RiskLevel) => roster.filter((p) => p.risk === level).length;
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const critical = alerts.filter((a) => a.severity === 'critical').length;
+  const pending = todaySlots.filter((s) => !s.done).length;
+
+  const patients = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return roster.filter((p) =>
+      (riskFilter === 'all' || p.risk === riskFilter) &&
+      (!q || p.name.toLowerCase().includes(q) || p.conditions.join(' ').toLowerCase().includes(q)),
+    );
+  }, [query, riskFilter, roster]);
+
+  const KPIS: { key: KpiKey; label: string; value: number; icon: typeof Users; tint: string; note: string }[] = [
+    { key: 'caseload', label: 'Under your care', value: roster.length, icon: Users, tint: P.peach, note: 'active pregnancies' },
+    { key: 'high-risk', label: 'High risk', value: riskCount('high'), icon: ShieldAlert, tint: P.rose, note: 'need close follow-up' },
+    { key: 'today', label: 'Today’s appointments', value: todaySlots.length, icon: CalendarDays, tint: P.aqua, note: `${pending} still to see` },
+    { key: 'alerts', label: 'Open alerts', value: alerts.length, icon: BellRing, tint: P.violet, note: `${critical} critical` },
+  ];
+
+  return (
+    <>
+      <Navbar />
+      <SectionDock items={TABS} active={tab} onChange={setTab} accent="peach"
+        layoutId="doctorTabPill"
+        badges={{ patients: roster.length, schedule: pending, requests: requestCount + messageUnread }} />
+
+      <main className="mx-auto max-w-6xl px-4 pb-36 pt-28 sm:pt-32">
+        {meId && <SosBanner doctorId={meId} />}
+        {/* greeting */}
+        <Reveal className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-peach-600">Clinician portal</span>
+            <h1 className="mt-1.5 text-3xl font-extrabold tracking-tight text-ink sm:text-4xl">
+              {greetingFor(now)}, <span className="font-serif italic text-peach-600">{addressFor(account?.name)}</span>
+            </h1>
+            <p className="mt-1 text-sm text-ink-muted">
+              {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
+              {pending} patients still to see · {critical} urgent alerts
+            </p>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button className="relative grid h-11 w-11 place-items-center rounded-2xl glass-strong text-ink-soft transition-colors hover:text-ink">
+              <BellRing className="h-5 w-5" />
+              {critical > 0 && (
+                <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white ring-2 ring-white">
+                  {critical}
+                </span>
+              )}
+            </button>
+            <motion.button
+              onClick={() => setProfileOpen(true)}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+              aria-label="Open your profile"
+              className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-peach-400 to-peach-600 text-sm font-bold text-white shadow-[0_10px_30px_-8px_rgba(234,92,29,0.5)]"
+            >
+              LO
+            </motion.button>
+          </div>
+        </Reveal>
+
+        {/* ============================== OVERVIEW ============================== */}
+        {tab === 'overview' && (
+          <motion.div key="ov" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            {/* KPI row */}
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              {KPIS.map((k, i) => (
+                <Reveal key={k.label} delay={i * 0.05}>
+                  <GlassCard
+                    interactive
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${k.label} — open details`}
+                    onClick={() => setKpi(k.key)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setKpi(k.key); }
+                    }}
+                    className={cn(
+                      'relative h-full cursor-pointer p-5',
+                      k.key === 'high-risk' && 'overflow-hidden',
+                    )}
+                  >
+                    {/*
+                      The symptom logger's drifting beams, on the high-risk card
+                      alone. It is the one number a clinician should be drawn to
+                      first; putting it behind all four would say nothing.
+                    */}
+                    {k.key === 'high-risk' && <BeamsBackground intensity="vivid" count={14} />}
+
+                    <div className="relative flex items-center justify-between">
+                      <span className="grid h-10 w-10 place-items-center rounded-2xl" style={{ background: `${k.tint}1f`, color: k.tint }}>
+                        <k.icon className="h-5 w-5" />
+                      </span>
+                      <motion.span
+                        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 + i * 0.05 }}
+                        className="text-3xl font-extrabold tabular-nums text-ink"
+                      >
+                        {k.value}
+                      </motion.span>
+                    </div>
+                    <div className="relative mt-4 text-sm font-bold text-ink">{k.label}</div>
+                    <div className="relative text-xs text-ink-muted">{k.note}</div>
+                  </GlassCard>
+                </Reveal>
+              ))}
+            </div>
+
+            {/* urgent alerts */}
+            <div className="mt-8">
+              <Reveal className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-extrabold tracking-tight text-ink">Needs your attention</h2>
+                  <p className="text-sm text-ink-muted">Raised automatically from what patients logged.</p>
+                </div>
+              </Reveal>
+              <div className="space-y-3">
+                {alerts.map((a, i) => (
+                  <Reveal key={a.id} delay={i * 0.04}>
+                    <GlassCard interactive
+                      onClick={() => setSelected(roster.find((p) => p.name === a.patient) ?? null)}
+                      className="flex items-start gap-3.5 p-4">
+                      <span className={cn('grid h-10 w-10 flex-none place-items-center rounded-xl',
+                        a.severity === 'critical' ? 'bg-rose-500/12 text-rose-600' : 'bg-amber-500/12 text-amber-600')}>
+                        {a.severity === 'critical' ? <ShieldAlert className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2">
+                          <span className="text-sm font-bold text-ink">{a.title}</span>
+                          <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold',
+                            a.severity === 'critical' ? 'bg-rose-500/12 text-rose-700' : 'bg-amber-500/12 text-amber-700')}>
+                            {a.severity}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-semibold text-peach-600">{a.patient} · {a.ago} ago</div>
+                        <p className="mt-1 text-[12px] leading-relaxed text-ink-soft">{a.detail}</p>
+                      </div>
+                      <ChevronRight className="h-5 w-5 flex-none text-ink-faint" />
+                    </GlassCard>
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+
+            {/* clinic activity + caseload mix */}
+            <div className="mt-8 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
+              <Reveal>
+                <Card title="Clinic activity" sub="Patients seen vs booked this week" icon={TrendingUp} tint={P.peach}>
+                  <ResponsiveContainer width="100%" height={210}>
+                    <BarChart data={analytics?.clinicWeek ?? []} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+                      <XAxis dataKey="d" tickLine={false} axisLine={false} tick={axisTick} dy={6} />
+                      <YAxis tickLine={false} axisLine={false} tick={axisTick} width={30} />
+                      <Tooltip content={<Tip />} cursor={{ fill: 'rgba(251,117,52,0.06)' }} />
+                      <Bar dataKey="booked" name="Booked" radius={[6, 6, 0, 0]} fill="#ffd2b8" barSize={18} />
+                      <Bar dataKey="seen" name="Seen" radius={[6, 6, 0, 0]} fill={P.peach} barSize={18} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              </Reveal>
+
+              <Reveal delay={0.05}>
+                <Card title="Caseload by trimester" sub="38 active pregnancies" icon={Users} tint={P.aqua}>
+                  <div className="flex items-center gap-4">
+                    <div className="relative h-[150px] w-[150px] flex-none">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={trimesterSlices} dataKey="value" nameKey="name" innerRadius={46} outerRadius={68} paddingAngle={3} stroke="none">
+                            {trimesterSlices.map((t) => <Cell key={t.name} fill={t.color} />)}
+                          </Pie>
+                          <Tooltip content={<Tip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                        <div>
+                          <div className="text-2xl font-extrabold text-ink">38</div>
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Total</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {trimesterSlices.map((t) => (
+                        <div key={t.name} className="flex items-center gap-2 text-xs font-semibold text-ink-soft">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: t.color }} />{t.name}
+                          <span className="ml-auto text-ink">{t.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Card>
+              </Reveal>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ============================== PATIENTS ============================== */}
+        {tab === 'patients' && (
+          <motion.div key="pt" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            <Reveal className="mb-4">
+              <h2 className="text-lg font-extrabold tracking-tight text-ink">Your patients</h2>
+              <p className="text-sm text-ink-muted">Select anyone to open their record.</p>
+            </Reveal>
+
+            <Reveal>
+              <GlassCard className="p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="relative flex-1">
+                    <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+                    <input
+                      value={query} onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search by name or condition…"
+                      className="h-11 w-full rounded-2xl border border-white/60 bg-white/70 pl-10 pr-4 text-sm font-medium text-ink outline-none transition placeholder:text-ink-faint focus:border-peach-400 focus:ring-2 focus:ring-peach-500/20"
+                    />
+                  </div>
+                  <div className="flex gap-1.5">
+                    {(['all', 'high', 'moderate', 'low'] as const).map((r) => (
+                      <button key={r} onClick={() => setRiskFilter(r)}
+                        className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition',
+                          riskFilter === r ? 'border-peach-500/40 bg-peach-500/15 text-peach-700'
+                            : 'border-white/60 bg-white/60 text-ink-soft hover:bg-white')}>
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </GlassCard>
+            </Reveal>
+
+            {/* what an empty caseload looks like, instead of someone else's patients */}
+            {rosterLoaded && roster.length === 0 && (
+              <Reveal className="mt-4">
+                <GlassCard className="p-8 text-center">
+                  <Users className="mx-auto h-7 w-7 text-ink-faint" />
+                  <p className="mt-3 text-[15px] font-bold text-ink">
+                    {rosterError ? 'Your caseload could not be loaded' : 'No patients yet'}
+                  </p>
+                  <p className="mx-auto mt-1.5 max-w-sm text-sm text-ink-muted">
+                    {rosterError
+                      ? 'Something went wrong reaching the server. Nothing is shown rather than a guess — reload to try again.'
+                      : 'A mother appears here once she requests a consultation with you and you accept it. Requests arrive in your Inbox.'}
+                  </p>
+                </GlassCard>
+              </Reveal>
+            )}
+
+            {/* the search found nothing, which is different from having nobody */}
+            {rosterLoaded && roster.length > 0 && patients.length === 0 && (
+              <Reveal className="mt-4">
+                <GlassCard className="p-8 text-center">
+                  <p className="text-[15px] font-bold text-ink">No match</p>
+                  <p className="mt-1.5 text-sm text-ink-muted">
+                    None of your {roster.length} patients match that search and filter.
+                  </p>
+                </GlassCard>
+              </Reveal>
+            )}
+
+            <div className="mt-4 space-y-3">
+              {patients.map((p, i) => (
+                <Reveal key={p.id} delay={i * 0.03}>
+                  <GlassCard interactive onClick={() => setSelected(p)} className="flex items-center gap-3.5 p-4">
+                    <span className="grid h-11 w-11 flex-none place-items-center rounded-2xl text-[13px] font-bold text-white"
+                      style={{ background: RISK_META[p.risk].color }}>
+                      {p.name.split(' ').map((w) => w[0]).slice(0, 2).join('')}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2">
+                        <span className="text-sm font-bold text-ink">{p.name}</span>
+                        <RiskPill level={p.risk} />
+                        {p.flags.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600">
+                            <AlertTriangle className="h-3 w-3" />{p.flags.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] font-medium text-ink-muted">
+                        {p.age} yrs · week {p.week} · next {p.nextVisit}
+                      </div>
+                    </div>
+                    <div className="hidden flex-none items-center gap-3 sm:flex">
+                      <div className="text-right">
+                        <div className="text-[13px] font-extrabold tabular-nums text-ink">{p.bp.sys}/{p.bp.dia}</div>
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-ink-faint">mmHg</div>
+                      </div>
+                      <Spark values={p.trend} color={RISK_META[p.risk].color} />
+                    </div>
+                    <ChevronRight className="h-5 w-5 flex-none text-ink-faint" />
+                  </GlassCard>
+                </Reveal>
+              ))}
+
+              {patients.length === 0 && (
+                <div className="rounded-3xl border border-dashed border-ink/15 px-4 py-12 text-center text-sm font-medium text-ink-faint">
+                  No patients match that search.
+                </div>
+              )}
+            </div>
+
+            {/* discharging, and what the ones who left said on the way out */}
+            <CareEndings doctorId={meId} patients={roster} onChanged={() => setRoster((r) => [...r])} />
+          </motion.div>
+        )}
+
+        {/* ============================== SCHEDULE ============================== */}
+        {tab === 'schedule' && (
+          <motion.div key="sc" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            <Reveal className="mb-4">
+              <h2 className="text-lg font-extrabold tracking-tight text-ink">Today’s clinic</h2>
+              <p className="text-sm text-ink-muted">
+                {todaySlots.length} appointments · {todaySlots.length - pending} completed
+              </p>
+            </Reveal>
+
+            <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+              <div className="relative">
+                {/* timeline rail */}
+                <div className="absolute bottom-4 left-[70px] top-4 w-px bg-ink/10" />
+                <div className="space-y-3">
+                  {todaySlots.map((s, i) => {
+                    const meta = KIND_META[s.kind];
+                    return (
+                      <Reveal key={s.id} delay={i * 0.04}>
+                        <div className="relative flex items-center gap-4">
+                          <div className="w-12 flex-none text-right text-[13px] font-extrabold tabular-nums text-ink-soft">{s.time}</div>
+                          <span className={cn('relative z-10 grid h-4 w-4 flex-none place-items-center rounded-full ring-4 ring-surface-base',
+                            s.done ? 'bg-emerald-500' : '')} style={!s.done ? { background: meta.color } : undefined} />
+                          <GlassCard className={cn('flex flex-1 items-center gap-3 p-3.5', s.done && 'opacity-60')}>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-x-2">
+                                <span className="text-sm font-bold text-ink">{s.patient}</span>
+                                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                                  style={{ background: `${meta.color}1f`, color: meta.color }}>{meta.label}</span>
+                              </div>
+                              <div className="text-[11px] font-medium text-ink-muted">{s.reason}</div>
+                            </div>
+                            {s.done
+                              ? <CheckCircle2 className="h-5 w-5 flex-none text-emerald-500" />
+                              : <Clock className="h-5 w-5 flex-none text-ink-faint" />}
+                          </GlassCard>
+                        </div>
+                      </Reveal>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <Reveal>
+                  <Card title="Session summary" sub="How today is tracking" icon={Activity} tint={P.mint}>
+                    <div className="space-y-3">
+                      {[
+                        { l: 'Seen', v: todaySlots.length - pending, c: P.mint },
+                        { l: 'Remaining', v: pending, c: P.peach },
+                        { l: 'Urgent', v: todaySlots.filter((s) => s.kind === 'urgent').length, c: P.rose },
+                      ].map((r) => (
+                        <div key={r.l}>
+                          <div className="mb-1.5 flex items-center justify-between text-xs font-semibold">
+                            <span className="text-ink-soft">{r.l}</span>
+                            <span className="text-ink">{r.v}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                            <motion.div className="h-full rounded-full" style={{ background: r.c }}
+                              initial={{ width: 0 }} animate={{ width: `${(r.v / todaySlots.length) * 100}%` }}
+                              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                </Reveal>
+
+                <Reveal delay={0.05}>
+                  <Card title="Next up" sub="Your following patient" icon={ArrowRight} tint={P.brand}>
+                    {(() => {
+                      const next = todaySlots.find((s) => !s.done);
+                      if (!next) return <p className="text-sm text-ink-muted">Clinic complete for today.</p>;
+                      const pt = roster.find((p) => p.name === next.patient);
+                      return (
+                        <button onClick={() => pt && setSelected(pt)} className="w-full text-left">
+                          <div className="text-2xl font-extrabold text-ink">{next.time}</div>
+                          <div className="mt-1 text-sm font-bold text-ink">{next.patient}</div>
+                          <div className="text-xs text-ink-muted">{next.reason}</div>
+                          {pt && (
+                            <div className="mt-3 flex items-center gap-2">
+                              <RiskPill level={pt.risk} />
+                              <span className="text-[11px] font-semibold text-ink-muted">BP {pt.bp.sys}/{pt.bp.dia}</span>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })()}
+                  </Card>
+                </Reveal>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ============================== REQUESTS ============================== */}
+        {tab === 'requests' && (
+          <motion.div key="rq" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            {meId ? (
+              <div className="space-y-6">
+                <RequestInbox doctorId={meId} onChange={setRequestCount} />
+                <MessageThreads doctorId={meId} roster={roster} onChange={setMessageUnread} />
+              </div>
+            ) : (
+              <GlassCard className="p-10 text-center text-sm font-semibold text-ink-muted">
+                Cannot reach the clinic server, so requests are unavailable.
+              </GlassCard>
+            )}
+          </motion.div>
+        )}
+
+        {/* ============================ MODERATION ============================ */}
+        {tab === 'moderation' && (
+          <motion.div key="md" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            <ModerationQueue doctorId={meId} />
+          </motion.div>
+        )}
+
+        {/* ============================== REPORTS ============================== */}
+        {tab === 'reports' && (
+          <motion.div key="rp" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+            <Reveal className="mb-4">
+              <h2 className="text-lg font-extrabold tracking-tight text-ink">Practice reports</h2>
+              <p className="text-sm text-ink-muted">Screening compliance and delivery outcomes across your caseload.</p>
+            </Reveal>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Reveal>
+                <Card title="Screening compliance" sub="% of eligible patients completed" icon={ClipboardList} tint={P.peach}>
+                  <div className="space-y-3.5">
+                    {(analytics?.vaccineCoverage ?? []).length === 0 && (
+                      <p className="rounded-2xl border border-dashed border-ink/15 px-3 py-6 text-center text-xs font-medium text-ink-faint">
+                        No doses recorded across your caseload yet.
+                      </p>
+                    )}
+                    {(analytics?.vaccineCoverage ?? []).map((s) => (
+                      <div key={s.name}>
+                        <div className="mb-1.5 flex items-center justify-between text-xs font-semibold">
+                          <span className="text-ink-soft">{s.name}</span>
+                          <span className={cn(s.done >= 90 ? 'text-emerald-600' : s.done >= 75 ? 'text-ink' : 'text-amber-600')}>
+                            {/* the denominator travels with the figure: "100%" of one
+                                dose and "100%" of forty must not look identical */}
+                            {s.done}% <span className="font-normal text-ink-faint">of {s.of}</span>
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                          <motion.div className="h-full rounded-full"
+                            style={{ background: s.done >= 90 ? P.mint : s.done >= 75 ? P.peach : '#f6b93b' }}
+                            initial={{ width: 0 }} whileInView={{ width: `${s.done}%` }} viewport={{ once: true }}
+                            transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </Reveal>
+
+              {/*
+                A "Delivery outcomes" chart lived here, plotting term against
+                preterm births for six months — a hundred and twenty births
+                that nobody recorded, because this application has no births
+                or outcomes table of any kind. It is deleted rather than
+                estimated: a clinician reading invented birth figures as real
+                is the most damaging thing this page could have done.
+              */}
+              <Reveal delay={0.1} className="lg:col-span-2">
+                <Card title="Risk distribution" sub="Where your caseload sits today" icon={ShieldAlert} tint={P.violet}>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {(['high', 'moderate', 'low'] as RiskLevel[]).map((r) => {
+                      const n = riskCount(r);
+                      const pct = Math.round((n / roster.length) * 100);
+                      return (
+                        <div key={r} className="rounded-2xl border border-white/60 bg-white/55 p-4">
+                          <div className="flex items-center justify-between">
+                            <RiskPill level={r} />
+                            <span className="text-2xl font-extrabold tabular-nums text-ink">{n}</span>
+                          </div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                            <motion.div className="h-full rounded-full" style={{ background: RISK_META[r].color }}
+                              initial={{ width: 0 }} whileInView={{ width: `${pct}%` }} viewport={{ once: true }}
+                              transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }} />
+                          </div>
+                          <div className="mt-2 text-[11px] font-semibold text-ink-muted">{pct}% of caseload</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-4 text-[11px] leading-relaxed text-ink-faint">
+                    Risk levels are derived from logged vitals, reported symptoms and history — they support triage,
+                    they do not replace clinical judgement.
+                  </p>
+                </Card>
+              </Reveal>
+            </div>
+          </motion.div>
+        )}
+      </main>
+
+      <Footer />
+      <PatientDrawer patient={selected} onClose={() => setSelected(null)}
+        onAssign={(p) => { setSelected(null); setAssigning(p); }} />
+      <KpiModal
+        which={kpi}
+        roster={roster}
+        slots={todaySlots}
+        alerts={alerts}
+        onClose={() => setKpi(null)}
+        onOpenPatient={setSelected}
+      />
+
+      <DoctorProfile doctor={meDoctor} todayCount={todaySlots.length} open={profileOpen} onClose={() => setProfileOpen(false)} onDoctorChange={setMeDoctor} />
+      <AssignModal patient={assigning} clinician={meDoctor?.name ?? account?.name ?? 'your clinician'} onClose={() => setAssigning(null)} />
+    </>
+  );
+}
