@@ -1,0 +1,947 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Ambulance, BellRing, Check, Clock, Copy, Crosshair, Download, Key, MapPin, MessageCircle, Pencil, Phone, Plus,
+  Share2, ShieldCheck, Smartphone, Trash2, TriangleAlert, UserPlus, X,
+} from 'lucide-react';
+import { cn } from '@/lib/cn';
+import { api } from '@/lib/api';
+import { isNative } from '@/lib/native';
+import { audioSupported, confirmTone, stopAlarm, tick as tickSound } from '@/lib/alarm';
+import {
+  apiOrigin, CHANNEL_META, COUNTDOWN_SECONDS, DEFAULT_EMERGENCY, formatCoords,
+  GUARDIAN_APP_URL, mapLink,
+  RELATIONS, sinceLabel,
+  type Guardian, type SosAlert,
+} from '@/data/sos';
+
+type Phase = 'ready' | 'counting' | 'sending' | 'sent' | 'guardians';
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  /** so the header badge can follow the live alert */
+  onAlertChange?: (alert: SosAlert | null) => void;
+}
+
+/** Best-effort fix. Never rejects — an alert without a location still goes. */
+function locate(): Promise<{ lat?: number; lng?: number; accuracy?: number; locationNote?: string }> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve({ locationNote: 'unavailable' });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({
+        lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy,
+      }),
+      (err) => resolve({
+        locationNote: err.code === err.PERMISSION_DENIED ? 'denied'
+          : err.code === err.TIMEOUT ? 'timeout' : 'unavailable',
+      }),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 },
+    );
+  });
+}
+
+/** Set expectations before she presses it, not during. */
+const STEPS = [
+  { icon: Clock, text: `${COUNTDOWN_SECONDS} seconds count down — cancel any time` },
+  { icon: Crosshair, text: 'Your location is found and attached' },
+  { icon: BellRing, text: 'Your guardians and your doctor are alerted at once' },
+  { icon: ShieldCheck, text: 'You can mark yourself safe afterwards' },
+];
+
+const LOCATION_COPY: Record<string, string> = {
+  denied: 'Location is switched off, so responders will not see where you are.',
+  timeout: 'Could not get a fix in time — the alert went without a location.',
+  unavailable: 'This device cannot share a location.',
+};
+
+/* ------------------------------------------------------------- countdown */
+
+function CountdownRing({ left, total }: { left: number; total: number }) {
+  const R = 78;
+  const circumference = 2 * Math.PI * R;
+  const progress = left / total;
+
+  return (
+    <div className="relative grid place-items-center">
+      <svg viewBox="0 0 180 180" className="h-44 w-44 -rotate-90">
+        <circle cx="90" cy="90" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="9" />
+        <circle
+          cx="90" cy="90" r={R} fill="none" stroke="white" strokeWidth="9" strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - progress)}
+          style={{ transition: 'stroke-dashoffset 1s linear' }}
+        />
+      </svg>
+      <div className="absolute text-center">
+        <motion.div
+          key={left}
+          initial={{ scale: 1.35, opacity: 0.4 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          className="text-6xl font-extrabold leading-none text-white tabular-nums"
+        >
+          {left}
+        </motion.div>
+        <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.2em] text-white/80">
+          sending in
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================================= modal ================================= */
+
+export function SosModal({ open, onClose, onAlertChange }: Props) {
+  const [phase, setPhase] = useState<Phase>('ready');
+  const [left, setLeft] = useState(COUNTDOWN_SECONDS);
+  const [alert, setAlert] = useState<SosAlert | null>(null);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
+  const [error, setError] = useState('');
+
+  const [name, setName] = useState('');
+  const [relation, setRelation] = useState(RELATIONS[0]);
+  const [phone, setPhone] = useState('');
+
+  const [expandedGuardianId, setExpandedGuardianId] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyText = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(key);
+      setTimeout(() => setCopiedField(null), 2500);
+    } catch {
+      /* ignore */
+    }
+  };
+  /**
+   * The address a guardian's phone can actually reach. apiOrigin() is
+   * whatever this client used, which on the development machine is
+   * localhost — an address that means "this phone" once the link is opened
+   * on one. The server is the only thing that knows its LAN addresses, so
+   * it is asked.
+   */
+  const API_ORIGIN = apiOrigin();
+  const [lanOrigin, setLanOrigin] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getNetwork()
+      .then((n) => { if (!cancelled) setLanOrigin(n.origins[0] ?? null); })
+      .catch(() => { /* fall back to API_ORIGIN below */ });
+    return () => { cancelled = true; };
+  }, []);
+  /** localhost is fine in this tab and useless in the link */
+  const reachable = /localhost|127\.0\.0\.1/.test(API_ORIGIN) && lanOrigin
+    ? lanOrigin
+    : API_ORIGIN;
+  const [emergencyNumber, setEmergencyNumber] = useState(DEFAULT_EMERGENCY);
+  const [editingNumber, setEditingNumber] = useState(false);
+  const [numberDraft, setNumberDraft] = useState(DEFAULT_EMERGENCY);
+
+  const tick = useRef<number | null>(null);
+  const remaining = useRef(COUNTDOWN_SECONDS);
+  const locating = useRef<Promise<Awaited<ReturnType<typeof locate>>> | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await api.getSosState();
+      setGuardians(s.contacts);
+      setEmergencyNumber(s.emergencyNumber);
+      if (s.active) {
+        setAlert(s.active);
+        setPhase('sent');
+        onAlertChange?.(s.active);
+      }
+    } catch {
+      setError('Cannot reach the server — an alert may not get through.');
+    }
+    // onAlertChange is a fresh closure each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+  /*
+   * In the app, the first fix ever asked for brings up the Android
+   * permission sheet, and an emergency is the wrong moment for it: the
+   * countdown waits on the fix, and a sheet left unanswered past the
+   * timeout sends the alert with no location. So the question is asked
+   * when this screen opens, while nothing is at stake — after that the
+   * fix during a real countdown is immediate. The result is thrown away;
+   * this is only about the permission and a warm GPS.
+   */
+  useEffect(() => { if (open && isNative) void locate(); }, [open]);
+
+  const clearTick = () => {
+    if (tick.current !== null) { window.clearInterval(tick.current); tick.current = null; }
+  };
+
+  // never leave the alarm running when the modal goes away
+  useEffect(() => () => { clearTick(); stopAlarm(); }, []);
+  useEffect(() => { if (!open) { clearTick(); stopAlarm(); } }, [open]);
+
+  const send = useCallback(async () => {
+    clearTick();
+    setPhase('sending');
+    try {
+      // the fix was requested when the countdown started, so it is usually ready
+      const where = await (locating.current ?? locate());
+      const raised = await api.raiseSos(where);
+      setAlert(raised);
+      onAlertChange?.(raised);
+      setPhase('sent');
+      stopAlarm();
+      confirmTone();
+    } catch (e) {
+      stopAlarm();
+      setPhase('ready');
+      setError((e as Error).message || 'The alert could not be sent');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const arm = () => {
+    setError('');
+    setLeft(COUNTDOWN_SECONDS);
+    setPhase('counting');
+    locating.current = locate();       // fetch the fix while she can still cancel
+
+    // The count lives in a ref, and every side effect happens in the interval
+    // body. A state updater must stay pure: StrictMode double-invokes it, which
+    // played two ticks a second and would have fired send() twice.
+    remaining.current = COUNTDOWN_SECONDS;
+    let beat = 0;
+    tickSound(beat);
+
+    clearTick();
+    tick.current = window.setInterval(() => {
+      remaining.current -= 1;
+      if (remaining.current <= 0) {
+        setLeft(0);
+        void send();
+        return;
+      }
+      beat += 1;
+      tickSound(beat);            // one per second, in step with the digit
+      setLeft(remaining.current);
+    }, 1000);
+  };
+
+  const abort = () => {
+    clearTick();
+    stopAlarm();
+    setPhase('ready');
+    setLeft(COUNTDOWN_SECONDS);
+  };
+
+  const standDown = async () => {
+    if (!alert) return;
+    try {
+      const closed = await api.closeSos(alert.id, 'safe');
+      setAlert(closed);
+      onAlertChange?.(null);
+      setPhase('ready');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  /**
+   * Hand a guardian their link. Uses the native share sheet on a phone, and
+   * falls back to the clipboard on a desktop.
+   */
+  const shareLink = async (g: Guardian) => {
+    const webUrl = `${reachable}/guardian-app/?t=${g.token}&api=${encodeURIComponent(`${reachable}/api`)}`;
+    const appUrl = `maternalcare://guardian/?t=${g.token}&api=${encodeURIComponent(`${reachable}/api`)}`;
+    const text = `Open the Guardian app link on your Android phone. If it does not open, use the browser link or paste the pairing code in the app.\n\nApp link: ${appUrl}\nBrowser link: ${webUrl}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'MaternalCare+ Guardian', text, url: appUrl });
+        return;
+      }
+      await navigator.clipboard.writeText(appUrl);
+    } catch {
+      // share sheet dismissed, or the clipboard is blocked — neither is an error
+    }
+  };
+
+  const saveNumber = async () => {
+    setError('');
+    try {
+      setEmergencyNumber(await api.setEmergencyNumber(numberDraft));
+      setEditingNumber(false);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const cancelNumber = () => {
+    setNumberDraft(emergencyNumber);
+    setEditingNumber(false);
+    setError('');
+  };
+
+  const addGuardian = async () => {
+    if (!name.trim()) return;
+    try {
+      // await outside the updater — the callback itself is not async
+      const saved = await api.addGuardian({ name, relation, phone });
+      setGuardians((g) => [...g, saved]);
+      setName(''); setPhone('');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const removeGuardian = async (id: string) => {
+    setGuardians((g) => g.filter((x) => x.id !== id));
+    try { await api.removeGuardian(id); } catch { load(); }
+  };
+
+  const danger = phase === 'counting' || phase === 'sending';
+
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[140] flex items-center justify-center p-4"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, pointerEvents: 'none', transition: { duration: 0.22 } }}
+        >
+          <motion.div
+            className={cn('absolute inset-0', danger ? 'bg-rose-950/55' : 'bg-ink/45')}
+            onClick={danger ? undefined : onClose}
+            initial={{ opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' }}
+            animate={{ opacity: 1, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          />
+
+          <motion.div
+            role="dialog" aria-modal="true" aria-label="Emergency SOS"
+            initial={{ opacity: 0, scale: 0.94, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97, y: 12, transition: { duration: 0.18 } }}
+            transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+            className={cn(
+              'relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-4xl shadow-float',
+              danger ? 'ring-1 ring-white/20' : 'glass-strong ring-gradient',
+            )}
+            style={danger
+              ? { background: 'linear-gradient(150deg, #e11d48 0%, #be123c 55%, #9f1239 100%)' }
+              : undefined}
+          >
+            {/* ------------------------------------------------ COUNTDOWN */}
+            {danger ? (
+              <div className="flex flex-col items-center px-6 py-8 text-center">
+                <motion.div
+                  animate={{ opacity: [1, 0.55, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                  className="inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.2em] text-white"
+                >
+                  <TriangleAlert className="h-3.5 w-3.5" /> Emergency
+                </motion.div>
+
+                <div className="mt-6">
+                  {phase === 'counting'
+                    ? <CountdownRing left={left} total={COUNTDOWN_SECONDS} />
+                    : (
+                      <div className="grid h-44 w-44 place-items-center">
+                        <div className="text-center text-white">
+                          <BellRing className="mx-auto h-12 w-12 animate-pulse" />
+                          <div className="mt-3 text-sm font-bold">Alerting everyone…</div>
+                        </div>
+                      </div>
+                    )}
+                </div>
+
+                <p className="mt-5 max-w-xs text-[13px] font-semibold leading-relaxed text-white/90">
+                  Your guardians and your doctor will be alerted with your location.
+                </p>
+
+                {phase === 'counting' && (
+                  <button
+                    onClick={abort}
+                    className="mt-6 w-full max-w-xs rounded-3xl bg-white py-4 text-base font-extrabold text-rose-700 shadow-lg transition hover:bg-white/90"
+                  >
+                    Cancel — I’m fine
+                  </button>
+                )}
+
+                <div className="mt-4 flex items-center gap-1.5 text-[11px] font-semibold text-white/70">
+                  <Crosshair className="h-3.5 w-3.5" /> Finding your location…
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-3 px-6 pt-6">
+                  <div>
+                    <h2 className="text-xl font-extrabold tracking-tight text-ink">
+                      {phase === 'sent' ? 'Help is on the way'
+                        : phase === 'guardians' ? 'Your guardians'
+                        : 'Emergency SOS'}
+                    </h2>
+                    {phase !== 'ready' && (
+                      <p className="mt-1 text-sm text-ink-muted">
+                        {phase === 'sent'
+                          ? 'Everyone below has your location.'
+                          : 'They are alerted the moment you press SOS.'}
+                      </p>
+                    )}
+                  </div>
+                  <button onClick={onClose} aria-label="Close"
+                    className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-white/70 text-ink-soft transition hover:text-ink">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-4 flex-1 overflow-y-auto px-6 pb-2">
+                  {error && (
+                    <div className="mb-3 rounded-2xl bg-rose-500/12 px-3 py-2.5 text-[12px] font-bold text-rose-700 ring-1 ring-rose-500/25">
+                      {error}
+                    </div>
+                  )}
+
+                  {/* ------------------------------------------- SENT */}
+                  {phase === 'sent' && alert && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2.5 rounded-3xl bg-emerald-500/12 px-4 py-3 ring-1 ring-emerald-500/25">
+                        <span className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-emerald-600 text-white">
+                          <Check className="h-5 w-5" strokeWidth={3} />
+                        </span>
+                        <div>
+                          <div className="text-[13px] font-extrabold text-emerald-900">
+                            Alert raised {sinceLabel(alert.triggeredAt)}
+                          </div>
+                          <div className="text-[11px] font-semibold text-emerald-800/80">
+                            {alert.reached} of {alert.notifications.length} reached right now
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* where she is */}
+                      <div className="rounded-3xl border border-white/60 bg-white/60 p-3.5">
+                        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-ink-faint">
+                          <MapPin className="h-3.5 w-3.5" /> Your location
+                        </div>
+                        {alert.location ? (
+                          <>
+                            <div className="mt-1 font-mono text-[13px] font-bold text-ink">
+                              {formatCoords(alert.location)}
+                            </div>
+                            {alert.location.accuracy && (
+                              <div className="text-[11px] font-semibold text-ink-muted">
+                                accurate to about {Math.round(alert.location.accuracy)} m
+                              </div>
+                            )}
+                            <a
+                              href={mapLink(alert.location)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-brand-600"
+                            >
+                              <MapPin className="h-3.5 w-3.5" /> Open in maps
+                            </a>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-[12px] font-semibold text-amber-700">
+                            {LOCATION_COPY[alert.locationNote ?? 'unavailable']}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* who was told, and honestly whether it landed */}
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">
+                          Who was alerted
+                        </div>
+                        <div className="mt-2 space-y-1.5">
+                          {alert.notifications.map((n) => (
+                            <div key={n.id}
+                              className="flex items-center gap-2.5 rounded-2xl border border-white/60 bg-white/60 px-3 py-2">
+                              <span className={cn('grid h-8 w-8 flex-none place-items-center rounded-xl',
+                                n.state === 'alerted'
+                                  ? 'bg-emerald-500/15 text-emerald-700'
+                                  : 'bg-amber-500/15 text-amber-700')}>
+                                {n.state === 'alerted'
+                                  ? <BellRing className="h-4 w-4" />
+                                  : <Clock className="h-4 w-4" />}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[12.5px] font-bold text-ink">
+                                  {n.recipient}
+                                  {n.relation && (
+                                    <span className="ml-1 font-semibold text-ink-faint">· {n.relation}</span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] font-semibold text-ink-muted">
+                                  {CHANNEL_META[n.channel].label} — {n.detail ?? CHANNEL_META[n.channel].note}
+                                </div>
+                              </div>
+                              <span className={cn('flex-none rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide',
+                                n.state === 'alerted'
+                                  ? 'bg-emerald-500/15 text-emerald-700'
+                                  : 'bg-amber-500/15 text-amber-700')}>
+                                {n.state === 'alerted' ? 'Alerted' : 'Queued'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/*
+                        A "Nearest hospitals" list stood here, fed from a table
+                        of four named institutions with placeholder numbers.
+                        Removed with the table: this service is online, it has
+                        no affiliation with any of them, and it cannot know
+                        which door is open tonight. On this screen a wrong
+                        number is not a small inaccuracy — it is the minutes
+                        she had. What is left is the national number and the
+                        people she chose herself.
+                      */}
+
+                      <a
+                        href={`tel:${emergencyNumber}`}
+                        className="flex items-center justify-center gap-2 rounded-3xl bg-gradient-to-br from-rose-500 to-rose-600 py-3.5 text-sm font-extrabold text-white shadow-[0_10px_30px_-8px_rgba(225,29,72,0.5)]"
+                      >
+                        <Phone className="h-[18px] w-[18px]" /> Call {emergencyNumber}
+                      </a>
+                    </div>
+                  )}
+
+                  {/* -------------------------------------- GUARDIANS */}
+                  {phase === 'guardians' && (
+                    <div className="space-y-2">
+                      {guardians.map((g) => {
+                        const isExpanded = expandedGuardianId === g.id;
+                        const baseGuardianUrl = reachable
+                          ? `${reachable}/guardian-app`
+                          : GUARDIAN_APP_URL;
+                        const fullWebUrl = `${baseGuardianUrl}/?t=${g.token}&api=${encodeURIComponent(`${reachable}/api`)}`;
+                        const appUrl = `maternalcare://guardian/?t=${g.token}&api=${encodeURIComponent(`${reachable}/api`)}`;
+                        const directApiUrl = `${reachable}/api/guardian/${g.token}`;
+                        const smsBody = `MaternalCare+ Guardian App Link:\n${appUrl}\n\nBrowser Fallback:\n${fullWebUrl}\n\nPairing Code:\n${g.token}`;
+                        const cleanPhone = g.phone ? g.phone.replace(/[^0-9+]/g, '') : '';
+                        const waHref = cleanPhone
+                          ? `https://wa.me/${cleanPhone.replace('+', '')}?text=${encodeURIComponent(smsBody)}`
+                          : `https://wa.me/?text=${encodeURIComponent(smsBody)}`;
+                        const smsHref = cleanPhone
+                          ? `sms:${cleanPhone}?body=${encodeURIComponent(smsBody)}`
+                          : `sms:?body=${encodeURIComponent(smsBody)}`;
+
+                        return (
+                          <div key={g.id} className="rounded-2xl border border-white/60 bg-white/70 p-3 space-y-2">
+                            <div className="flex items-center gap-2.5">
+                              <span className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-rose-500/12 text-rose-600 text-[11px] font-extrabold">
+                                {g.name.split(' ').map((w) => w[0]).slice(0, 2).join('')}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate text-[13px] font-bold text-ink">{g.name}</span>
+                                  {g.appLinked ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+                                      <Check className="h-2.5 w-2.5" /> App Linked
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
+                                      <Clock className="h-2.5 w-2.5" /> Pending
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] font-semibold text-ink-muted">
+                                  {[g.relation, g.phone].filter(Boolean).join(' · ') || 'No number saved'}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setExpandedGuardianId(isExpanded ? null : g.id)}
+                                className={cn(
+                                  'flex-none rounded-xl px-2.5 py-1.5 text-[11px] font-bold transition flex items-center gap-1',
+                                  isExpanded
+                                    ? 'bg-rose-600 text-white'
+                                    : 'bg-rose-500/12 text-rose-700 hover:bg-rose-500/20'
+                                )}
+                              >
+                                <Key className="h-3 w-3" />
+                                {isExpanded ? 'Hide Link' : 'Pairing Link'}
+                              </button>
+                              <button onClick={() => removeGuardian(g.id)} aria-label={`Remove ${g.name}`}
+                                className="grid h-7 w-7 flex-none place-items-center rounded-lg text-ink-faint transition hover:bg-rose-500/10 hover:text-rose-600">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="mt-2 pt-2 border-t border-rose-200/50 space-y-2.5 text-[11px]">
+                                <div className="rounded-xl bg-white/90 p-2.5 border border-rose-100 space-y-2">
+                                  <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-faint mb-1">
+                                      Android APK Link
+                                    </label>
+                                    <div className="flex gap-1.5">
+                                      <input
+                                        readOnly
+                                        value={appUrl}
+                                        className="flex-1 font-mono text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-ink outline-none"
+                                      />
+                                      <button
+                                        onClick={() => copyText(appUrl, `app-${g.id}`)}
+                                        className="flex-none inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-brand-700"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        {copiedField === `app-${g.id}` ? 'Copied!' : 'Copy APK Link'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-900 mb-1">
+                                      🔑 Pairing Code (Recommended for Android APK)
+                                    </label>
+                                    <div className="flex gap-1.5 items-center">
+                                      <code className="flex-1 font-mono text-[11px] font-bold bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 text-amber-900 tracking-wider overflow-x-auto">
+                                        {g.token}
+                                      </code>
+                                      <button
+                                        onClick={() => copyText(g.token, `token-${g.id}`)}
+                                        className="flex-none inline-flex items-center gap-1 rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-amber-700"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        {copiedField === `token-${g.id}` ? 'Copied!' : 'Copy Code'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-faint mb-1">
+                                      Direct API Endpoint URL
+                                    </label>
+                                    <div className="flex gap-1.5">
+                                      <input
+                                        readOnly
+                                        value={directApiUrl}
+                                        className="flex-1 font-mono text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-ink outline-none"
+                                      />
+                                      <button
+                                        onClick={() => copyText(directApiUrl, `api-${g.id}`)}
+                                        className="flex-none inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-indigo-700"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        {copiedField === `api-${g.id}` ? 'Copied!' : 'Copy API URL'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-faint mb-1">
+                                      Web Companion Link
+                                    </label>
+                                    <div className="flex gap-1.5">
+                                      <input
+                                        readOnly
+                                        value={fullWebUrl}
+                                        className="flex-1 font-mono text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-ink outline-none"
+                                      />
+                                      <button
+                                        onClick={() => copyText(fullWebUrl, `link-${g.id}`)}
+                                        className="flex-none inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-rose-700"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        {copiedField === `link-${g.id}` ? 'Copied!' : 'Copy Web Link'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-faint mb-1">
+                                      Send Link to {g.name}
+                                    </label>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <a
+                                        href={waHref}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-700 transition"
+                                      >
+                                        <MessageCircle className="h-3 w-3" /> Send via WhatsApp
+                                      </a>
+                                      <a
+                                        href={smsHref}
+                                        className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700 transition"
+                                      >
+                                        <Phone className="h-3 w-3" /> Send via SMS
+                                      </a>
+                                      <button
+                                        onClick={() => shareLink(g)}
+                                        className="inline-flex items-center gap-1 rounded-lg bg-slate-700 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-slate-800 transition"
+                                      >
+                                        <Share2 className="h-3 w-3" /> System Share
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="rounded-xl bg-rose-50/90 p-2.5 border border-rose-200 text-[10px] font-medium leading-relaxed text-ink-soft">
+                                  <strong className="block font-bold text-rose-900 mb-0.5">📲 Instructions for {g.name}:</strong>
+                                  1. Open the Guardian App on their Android phone.<br />
+                                  2. When prompted: <em>"Pair this app. Paste the personal link she sent you"</em>, paste the copied Link or Code above.<br />
+                                  3. Once paired, the app will automatically connect and show <span className="text-emerald-700 font-bold">App Linked</span>.
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {guardians.length > 0 && (
+                        <p className="px-1 text-[10px] font-medium leading-relaxed text-ink-faint">
+                          “Send app” copies that guardian’s private link. It is a key to your
+                          wellbeing summary — send it only to them.
+                        </p>
+                      )}
+
+                      {guardians.length === 0 && (
+                        <div className="rounded-2xl border border-dashed border-ink/15 px-3 py-5 text-center text-[11px] font-semibold text-ink-muted">
+                          No guardians yet. Add the people who should come for you.
+                        </div>
+                      )}
+
+                      <div className="rounded-3xl border border-white/60 bg-white/50 p-3">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">
+                          Add a guardian
+                        </div>
+                        <input
+                          value={name} onChange={(e) => setName(e.target.value)}
+                          placeholder="Their name" aria-label="Guardian name"
+                          className="mt-1.5 h-10 w-full rounded-2xl border border-white/60 bg-white/80 px-3.5 text-[12px] font-medium text-ink outline-none focus:border-rose-400"
+                        />
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {RELATIONS.map((r) => (
+                            <button key={r} onClick={() => setRelation(r)}
+                              className={cn('rounded-full border px-2.5 py-1 text-[11px] font-semibold transition',
+                                relation === r ? 'border-rose-500/40 bg-rose-500/15 text-rose-700'
+                                  : 'border-white/60 bg-white/70 text-ink-soft hover:bg-white')}>
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          value={phone} onChange={(e) => setPhone(e.target.value)}
+                          placeholder="Phone number" aria-label="Guardian phone" inputMode="tel"
+                          className="mt-1.5 h-10 w-full rounded-2xl border border-white/60 bg-white/80 px-3.5 text-[12px] font-medium text-ink outline-none focus:border-rose-400"
+                        />
+                        <button
+                          onClick={addGuardian}
+                          disabled={!name.trim()}
+                          className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-2xl bg-rose-600 py-2.5 text-[12px] font-bold text-white transition hover:bg-rose-700 disabled:opacity-50"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Add guardian
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ------------------------------------------ READY */}
+                  {phase === 'ready' && (
+                    <div className="space-y-3">
+                      <button
+                        onClick={arm}
+                        className="group relative flex w-full flex-col items-center gap-2 overflow-hidden rounded-4xl bg-gradient-to-br from-rose-500 to-rose-700 px-6 py-7 text-white shadow-[0_18px_40px_-12px_rgba(225,29,72,0.6)] transition hover:brightness-105"
+                      >
+                        <span className="relative grid h-16 w-16 place-items-center rounded-full bg-white/20">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/30" />
+                          <TriangleAlert className="relative h-8 w-8" />
+                        </span>
+                        <span className="text-xl font-extrabold tracking-tight">Press for help</span>
+                        <span className="text-[11px] font-semibold text-white/85">
+                          {COUNTDOWN_SECONDS} seconds to cancel before it sends
+                        </span>
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => setPhase('guardians')}
+                          className="flex items-center gap-2 rounded-2xl border border-white/60 bg-white/60 px-3 py-2.5 text-left transition hover:bg-white"
+                        >
+                          <UserPlus className="h-4 w-4 flex-none text-rose-600" />
+                          <span className="min-w-0">
+                            <span className="block text-[12px] font-bold text-ink">Guardians</span>
+                            <span className="block text-[10px] font-semibold text-ink-faint">
+                              {guardians.length} saved
+                            </span>
+                          </span>
+                        </button>
+                        {editingNumber ? (
+                          <div className="rounded-2xl border border-rose-300/70 bg-white/80 px-2.5 py-2">
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-ink-faint">
+                              Emergency number
+                            </label>
+                            <input
+                              value={numberDraft}
+                              onChange={(e) => setNumberDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveNumber();
+                                if (e.key === 'Escape') cancelNumber();
+                              }}
+                              inputMode="tel"
+                              autoFocus
+                              aria-label="Emergency number"
+                              className="mt-0.5 h-7 w-full bg-transparent text-[13px] font-bold text-ink outline-none"
+                            />
+                            <div className="mt-1 flex gap-1">
+                              <button onClick={saveNumber}
+                                className="flex-1 rounded-lg bg-rose-600 py-1 text-[10px] font-bold text-white transition hover:bg-rose-700">
+                                Save
+                              </button>
+                              <button onClick={cancelNumber}
+                                className="rounded-lg px-2 py-1 text-[10px] font-bold text-ink-muted transition hover:text-ink">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-stretch gap-1">
+                            <a
+                              href={`tel:${emergencyNumber}`}
+                              className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-white/60 bg-white/60 px-3 py-2.5 transition hover:bg-white"
+                            >
+                              <Ambulance className="h-4 w-4 flex-none text-rose-600" />
+                              <span className="min-w-0">
+                                <span className="block truncate text-[12px] font-bold text-ink">
+                                  Call {emergencyNumber}
+                                </span>
+                                <span className="block text-[10px] font-semibold text-ink-faint">
+                                  Ambulance
+                                </span>
+                              </span>
+                            </a>
+                            {/* a button cannot live inside the anchor, so it sits beside it */}
+                            <button
+                              onClick={() => { setNumberDraft(emergencyNumber); setEditingNumber(true); }}
+                              aria-label="Change the emergency number"
+                              title="Change the emergency number"
+                              className="grid w-9 flex-none place-items-center rounded-2xl border border-white/60 bg-white/60 text-ink-faint transition hover:bg-white hover:text-ink"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* what actually happens — no surprises mid-emergency */}
+                      <div className="rounded-3xl border border-white/60 bg-white/50 p-3.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">
+                          What happens when you press it
+                        </div>
+                        <ol className="mt-2 space-y-1.5">
+                          {STEPS.map(({ icon: Icon, text }) => (
+                            <li key={text} className="flex items-start gap-2 text-[11px] font-semibold text-ink-soft">
+                              <Icon className="mt-[1px] h-3.5 w-3.5 flex-none text-rose-500" />
+                              {text}
+                            </li>
+                          ))}
+                        </ol>
+                        {!audioSupported() && (
+                          <p className="mt-2 text-[10px] font-semibold text-amber-700">
+                            This browser cannot play the countdown sound.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* the companion app — built and downloadable from here */}
+                      <div className="rounded-3xl border border-dashed border-rose-300/70 bg-rose-500/[0.06] p-3.5">
+                        <div className="flex items-start gap-2.5">
+                          <span className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-rose-500/15 text-rose-600">
+                            <Smartphone className="h-5 w-5" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-[13px] font-extrabold text-ink">Guardian app</span>
+                              <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+                                Android ready
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] font-medium leading-relaxed text-ink-soft">
+                              A small app for the people you trust. When you raise an SOS it takes
+                              over their screen and sounds a full-volume alarm — even on silent,
+                              even locked — with your location and a route to you.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                          <a
+                            href={`${reachable}/downloads/guardian.apk`}
+                            download="guardian.apk"
+                            className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-rose-600 py-2.5 text-[12px] font-bold text-white transition hover:bg-rose-700"
+                          >
+                            <Download className="h-3.5 w-3.5" /> Android app
+                          </a>
+                          <button
+                            onClick={() => setPhase('guardians')}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-rose-300/70 bg-white/70 py-2.5 text-[12px] font-bold text-rose-700 transition hover:bg-white"
+                          >
+                            <Smartphone className="h-3.5 w-3.5" /> Send links
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-ink-soft">
+                          Links will point their app at{' '}
+                          <span className="font-mono text-brand-700">{reachable}</span>
+                          {reachable === API_ORIGIN && /localhost|127\.0\.0\.1/.test(API_ORIGIN)
+                            ? ' — which only works on this computer. Start the server so it can report a network address.'
+                            : '. Their phone must be on the same wifi.'}
+                        </p>
+                        <p className="mt-1.5 text-[10px] font-medium leading-relaxed text-ink-faint">
+                          Each guardian needs their own link to pair the app. On iPhone they open
+                          the link and add it to the Home Screen — Apple does not allow a web app
+                          to ring through silent mode, so only Android gets the forced alarm.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 border-t border-white/50 px-6 py-4">
+                  {phase === 'sent' ? (
+                    <>
+                      <span className="text-[11px] font-semibold text-ink-faint">
+                        Stay where you are if you can.
+                      </span>
+                      <button
+                        onClick={standDown}
+                        className="inline-flex items-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white transition hover:bg-emerald-700"
+                      >
+                        <ShieldCheck className="h-4 w-4" /> I’m safe now
+                      </button>
+                    </>
+                  ) : phase === 'guardians' ? (
+                    <>
+                      <button onClick={() => setPhase('ready')}
+                        className="rounded-xl px-3 py-2 text-[12px] font-bold text-ink-muted transition hover:text-ink">
+                        Back
+                      </button>
+                      <span className="text-[11px] font-semibold text-ink-faint">
+                        {guardians.length} will be alerted
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] font-semibold text-ink-faint">
+                      For immediate danger, call emergency services directly.
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}

@@ -1,0 +1,922 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BadgeCheck, BookOpen, ChevronDown, ChevronRight, ExternalLink, Flag, Heart, ImagePlus, MessageCircle,
+  Newspaper, Plus, Search, Send, ShieldCheck, Sparkles, Users, X,
+} from 'lucide-react';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { Reveal } from '@/components/ui/Reveal';
+import { LiquidButton } from '@/components/ui/LiquidButton';
+import { cn } from '@/lib/cn';
+import { api, fileUrl, type CommunityWeekGroup } from '@/lib/api';
+import { ReportDialog, type ReportTarget } from '@/components/mother/ReportDialog';
+import type { ReportReason } from '@/data/records';
+import type { ServerPost } from '@/data/records';
+import { useProfile } from '@/context/ProfileContext';
+import { BeamsBackground } from '@/components/ui/BeamsBackground';
+import { ArticleModal } from '@/components/mother/ArticleModal';
+import { NewsThumb } from '@/components/mother/NewsThumb';
+import {
+  KIND_TINT, newsFor, readingFor, type Article, type LifeStage,
+} from '@/data/reading';
+
+const C = { brand: '#3f66f0', rose: '#f2789f', mint: '#2fbf9b', violet: '#8b7bf3', peach: '#fb7534' };
+
+type Role = 'mother' | 'doctor';
+
+interface Comment {
+  id: string;
+  author: string;
+  role: Role;
+  body: string;
+  ago: string;
+  /** taken down by a moderator — `body` is then the tombstone line */
+  removed?: boolean;
+  /** true once this member has reported it */
+  reported?: boolean;
+}
+
+interface Post {
+  id: string;
+  author: string;
+  role: Role;
+  week?: number;
+  topic: string;
+  title: string;
+  body: string;
+  image?: string;
+  hearts: number;
+  /** whether the signed-in viewer is one of the people who hearted this */
+  hearted?: boolean;
+  clinicianAnswered: boolean;
+  ago: string;
+  comments: Comment[];
+  /** true once this member has reported it */
+  reported?: boolean;
+}
+
+const TOPICS = ['Second trimester', 'Sleep', 'Nutrition', 'Symptoms', 'Birth prep'];
+const FILTERS = ['All', ...TOPICS];
+
+/** Community rules surfaced while composing. */
+const RULES = [
+  'Be respectful — everyone here is going through something.',
+  'Share your experience, not a prescription.',
+  'Never tell someone to start or stop medication.',
+  'Urgent symptoms belong with your care team, not the forum.',
+  'Keep other people’s details private.',
+];
+
+const SEED: Post[] = [
+  {
+    id: 'p1', author: 'Nusrat J.', role: 'mother', week: 27, topic: 'Sleep',
+    title: 'Anyone else waking up at 3am every night?',
+    body: 'I fall asleep fine but wake around 3am and can’t settle again. Side-lying with a pillow helps a little. What worked for you?',
+    hearts: 32, clinicianAnswered: true, ago: '2h',
+    comments: [
+      { id: 'c1', author: 'Dr. Priya Nair', role: 'doctor', body: 'Very common in the third trimester. Keep the room dark and avoid checking the time — it raises alertness. If you are awake past 30 minutes, get up briefly rather than lying there.', ago: '1h' },
+      { id: 'c2', author: 'Priya S.', role: 'mother', body: 'A pillow under the bump as well as between the knees was what finally worked for me.', ago: '40m' },
+    ],
+  },
+  {
+    id: 'p2', author: 'Dr. Lena Ortiz', role: 'doctor', topic: 'Second trimester',
+    title: 'Why movement patterns matter more than kick counts',
+    body: 'From week 28, what matters is your baby’s usual pattern — not hitting a magic number. If the pattern changes, call the same day. Never wait until morning.',
+    hearts: 61, clinicianAnswered: true, ago: '6h',
+    comments: [
+      { id: 'c3', author: 'Farhana R.', role: 'mother', body: 'Thank you for saying this. I was stressing about reaching ten every day.', ago: '5h' },
+    ],
+  },
+  {
+    id: 'p3', author: 'Farhana R.', role: 'mother', week: 25, topic: 'Nutrition',
+    title: 'Iron tablets making me nauseous — alternatives?',
+    body: 'Taking them on an empty stomach was a mistake. My doctor suggested taking them with orange juice at night instead. Sharing in case it helps someone.',
+    hearts: 47, clinicianAnswered: false, ago: '1d',
+    comments: [],
+  },
+  {
+    id: 'p5', author: 'Priya S.', role: 'mother', week: 29, topic: 'Symptoms',
+    title: 'Heartburn every single night — what finally helped',
+    body: 'Stopped eating two hours before bed and raised the head of the mattress on books. Not perfect, but I sleep now.',
+    hearts: 24, clinicianAnswered: false, ago: '3d', comments: [],
+  },
+  {
+    id: 'p6', author: 'Dr. Lena Ortiz', role: 'doctor', topic: 'Nutrition',
+    title: 'You do not need to eat for two',
+    body: 'Second trimester needs roughly 340 extra calories a day, third around 450. Quality matters far more than quantity.',
+    hearts: 73, clinicianAnswered: true, ago: '4d', comments: [],
+  },
+  {
+    id: 'p7', author: 'Maria G.', role: 'mother', week: 12, topic: 'Symptoms',
+    title: 'When did morning sickness ease for you?',
+    body: 'Week 12 and still rough. Trying to hear that it does get better.',
+    hearts: 41, clinicianAnswered: false, ago: '4d', comments: [],
+  },
+  {
+    id: 'p8', author: 'Dr. Priya Nair', role: 'doctor', topic: 'Second trimester',
+    title: 'Braxton Hicks vs real contractions — how to tell',
+    body: 'Practice contractions are irregular and ease when you change position or drink water. Real ones get longer, stronger and closer together.',
+    hearts: 95, clinicianAnswered: true, ago: '5d', comments: [],
+  },
+  {
+    id: 'p9', author: 'Shirin A.', role: 'mother', week: 31, topic: 'Sleep',
+    title: 'Restless legs at night — anyone else?',
+    body: 'Worse in the last few weeks. My doctor is checking my iron levels.',
+    hearts: 18, clinicianAnswered: false, ago: '6d', comments: [],
+  },
+  {
+    id: 'p10', author: 'Farhana R.', role: 'mother', week: 25, topic: 'Birth prep',
+    title: 'Did antenatal classes actually help you?',
+    body: 'Trying to decide whether to book. Would love honest opinions rather than the brochure version.',
+    hearts: 33, clinicianAnswered: false, ago: '1w', comments: [],
+  },
+  {
+    id: 'p11', author: 'Dr. Lena Ortiz', role: 'doctor', topic: 'Symptoms',
+    title: 'Swelling: when it is normal and when to call',
+    body: 'Gradual ankle swelling by evening is expected. Sudden swelling of face or hands, especially with headache or vision changes, is not.',
+    hearts: 112, clinicianAnswered: true, ago: '1w', comments: [],
+  },
+  {
+    id: 'p12', author: 'Nusrat J.', role: 'mother', week: 27, topic: 'Nutrition',
+    title: 'Cheap and easy iron-rich meals?',
+    body: 'Lentils, spinach and eggs are on repeat here. Share yours — I am running out of ideas.',
+    hearts: 56, clinicianAnswered: false, ago: '1w', comments: [],
+  },
+  {
+    id: 'p4', author: 'Dr. Priya Nair', role: 'doctor', topic: 'Birth prep',
+    title: 'What to actually pack in your hospital bag (week 34 checklist)',
+    body: 'Most lists are far too long. You need documents, a phone charger, comfortable clothes and something for baby to go home in. Everything else is optional.',
+    hearts: 88, clinicianAnswered: true, ago: '2d',
+    comments: [],
+  },
+];
+
+const ROLE_META: Record<Role, { label: string; color: string }> = {
+  mother: { label: 'Mother', color: C.rose },
+  doctor: { label: 'Doctor', color: C.brand },
+};
+
+const PAGE = 5;
+const MAX_SHOWN = 10;
+/** news stories revealed per "load more" */
+const NEWS_PAGE = 4;
+
+const uid = () => `x-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+const initials = (n: string) => n.split(' ').map((w) => w[0]).slice(0, 2).join('');
+
+function Avatar({ name, role, size = 9, photo }: { name: string; role: Role; size?: number; photo?: string | null }) {
+  const box = size === 9 ? 'h-9 w-9' : 'h-7 w-7';
+  if (photo) {
+    return <img src={photo} alt={name} className={cn('flex-none rounded-full object-cover', box)} />;
+  }
+  return (
+    <span
+      className={cn('grid flex-none place-items-center rounded-full font-bold text-white',
+        box, size === 9 ? 'text-[11px]' : 'text-[10px]')}
+      style={{ background: ROLE_META[role].color }}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+/** The rules panel that appears while composing. */
+function RulesNote({ compact }: { compact?: boolean }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: compact ? 0 : 12, y: compact ? -8 : 0 }}
+      animate={{ opacity: 1, x: 0, y: 0 }}
+      exit={{ opacity: 0, x: compact ? 0 : 12, y: compact ? -8 : 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-3xl border border-brand-200/70 bg-brand-50/70 p-4 backdrop-blur-md"
+    >
+      <div className="flex items-center gap-2 text-[12px] font-extrabold text-brand-700">
+        <ShieldCheck className="h-4 w-4" /> Before you post
+      </div>
+      <ul className="mt-2.5 space-y-1.5">
+        {RULES.map((r) => (
+          <li key={r} className="flex gap-2 text-[11px] leading-relaxed text-ink-soft">
+            <span className="mt-1.5 h-1 w-1 flex-none rounded-full bg-brand-400" />{r}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[10px] font-medium leading-relaxed text-ink-faint">
+        Posts are moderated. Clinical answers are reviewed by a registered doctor.
+      </p>
+    </motion.div>
+  );
+}
+
+interface CommunityProps {
+  week: number;
+  stage?: LifeStage;
+  /** symptom labels from her journal — used to rank the news feed */
+  symptoms?: string[];
+  /** true when today's water intake is below target */
+  lowHydration?: boolean;
+}
+
+export function CommunitySection({ week, stage = 'pregnant', symptoms = [], lowHydration }: CommunityProps) {
+  const me = useProfile();
+  const [shown, setShown] = useState(PAGE);
+  const [newsShown, setNewsShown] = useState(NEWS_PAGE);
+  const [article, setArticle] = useState<Article | null>(null);
+  const reading = readingFor(stage, week);
+
+  // joined so the memo re-runs when the journal changes, not on every render
+  const symptomKey = symptoms.join('|');
+  const news = useMemo(
+    () => newsFor(stage, {
+      symptoms, week, lowHydration,
+      age: me.details.age ?? undefined, bloodGroup: me.details.bloodGroup,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stage, symptomKey, week, lowHydration, me.details.age, me.details.bloodGroup],
+  );
+  // the board lives in the database now; SEED is only what shows if it is
+  // unreachable, so an offline backend degrades to a demo rather than a blank
+  const [posts, setPosts] = useState<Post[]>(SEED);
+  /* reporting: the reasons come from the server so they cannot drift from the
+     ones the moderation queue weighs */
+  const [reasons, setReasons] = useState<ReportReason[]>([]);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  const [filter, setFilter] = useState('All');
+  const [query, setQuery] = useState('');
+  const [openThread, setOpenThread] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  // composer
+  const [composing, setComposing] = useState(false);
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [topic, setTopic] = useState(TOPICS[0]);
+  const [image, setImage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return posts.filter((p) =>
+      (filter === 'All' || p.topic === filter) &&
+      (!q || p.title.toLowerCase().includes(q) || p.body.toLowerCase().includes(q)),
+    );
+  }, [posts, filter, query]);
+
+  /** Server shape → the shape this component renders. */
+  const fromServer = (p: ServerPost): Post => ({
+    id: p.id,
+    author: p.author,
+    role: p.role,
+    week: p.week,
+    topic: p.topic ?? 'Symptoms',
+    title: p.title,
+    body: p.body,
+    image: p.image ? fileUrl(p.image) : undefined,
+    hearts: p.hearts,
+    hearted: p.hearted,
+    clinicianAnswered: p.clinicianAnswered,
+    ago: p.ago,
+    reported: p.reported,
+    comments: p.comments.map((c) => ({
+      id: c.id, author: c.author, role: c.role, body: c.body, ago: c.ago,
+      removed: c.removed, reported: c.reported,
+    })),
+  });
+
+  /*
+   * The sidebar figures. They were three literals in the markup — 1,284
+   * mothers, 36 clinicians, 92% answered — printed under a heading naming her
+   * own gestational week, so every mother was told the same invented numbers
+   * about a cohort nobody had counted. Null until the server answers, and the
+   * panel says so rather than showing a placeholder that looks like a count.
+   */
+  const [group, setGroup] = useState<CommunityWeekGroup | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getCommunityWeekGroup()
+      .then((g) => { if (!cancelled) setGroup(g); })
+      .catch(() => { /* the panel shows an em dash rather than a number */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const loadBoard = useCallback(async () => {
+    try {
+      const { posts: rows, reasons: why } = await api.getPosts({ limit: 50 });
+      setPosts(rows.map(fromServer));
+      setReasons(why ?? []);
+    } catch {
+      // keep SEED so the section still reads as a demo
+    }
+  }, []);
+
+  useEffect(() => { loadBoard(); }, [loadBoard]);
+
+  const pickImage = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setImage(String(reader.result));
+    reader.readAsDataURL(file);
+  };
+
+  const resetComposer = () => {
+    setComposing(false); setTitle(''); setBody(''); setImage(null); setTopic(TOPICS[0]);
+  };
+
+  const publish = async () => {
+    if (!title.trim() && !body.trim()) return;
+    const draft = {
+      title: title.trim() || 'Untitled',
+      body: body.trim(),
+      topic,
+      image: image ?? undefined,
+    };
+    resetComposer();
+    try {
+      const saved = await api.createPost(draft);
+      setPosts((p) => [fromServer(saved), ...p]);
+    } catch {
+      // offline: show it locally so her writing is not lost mid-session
+      setPosts((p) => [{
+        id: uid(), author: me.name, role: 'mother', week, topic: draft.topic,
+        title: draft.title, body: draft.body, image: draft.image,
+        hearts: 0, clinicianAnswered: false, ago: 'just now', comments: [],
+      }, ...p]);
+    }
+  };
+
+  const addComment = async (postId: string) => {
+    const text = (drafts[postId] || '').trim();
+    if (!text) return;
+    setDrafts((d) => ({ ...d, [postId]: '' }));
+
+    // show it immediately, then reconcile with what the server stored
+    const optimistic = { id: uid(), author: me.name, role: 'mother' as const, body: text, ago: 'just now' };
+    setPosts((all) => all.map((p) => (p.id === postId
+      ? { ...p, comments: [...p.comments, optimistic] } : p)));
+
+    try {
+      const saved = await api.commentOnPost(postId, text);
+      setPosts((all) => all.map((p) => (p.id === postId ? fromServer(saved) : p)));
+    } catch {
+      /* offline — the optimistic comment stands for this session */
+    }
+  };
+
+  /**
+   * Once a report is filed, mark that item so the button reads "Reported"
+   * rather than offering an action that would now be refused.
+   */
+  const markReported = (t: ReportTarget) => {
+    setPosts((prev) => prev.map((p) => {
+      if (t.kind === 'posts') return p.id === t.id ? { ...p, reported: true } : p;
+      return {
+        ...p,
+        comments: p.comments.map((c) => (c.id === t.id ? { ...c, reported: true } : c)),
+      };
+    }));
+  };
+
+  /**
+   * Hearting a post.
+   *
+   * Whether she has already hearted it comes from the server now, not from
+   * React state — that state was lost on every reload, which handed her a
+   * fresh vote each time and is how a post came to claim more likes than the
+   * app has accounts. The optimistic update is still local so the tap feels
+   * instant, but the server's answer is what stands.
+   */
+  const toggleHeart = async (postId: string) => {
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+    const wasLiked = Boolean(post.hearted);
+    const delta = wasLiked ? -1 : 1;
+
+    setPosts((all) => all.map((p) => (p.id === postId
+      ? { ...p, hearted: !wasLiked, hearts: Math.max(0, p.hearts + delta) } : p)));
+    try {
+      const saved = await api.heartPost(postId, delta);
+      setPosts((all) => all.map((p) => (p.id === postId ? fromServer(saved) : p)));
+    } catch {
+      // put it back — a like that did not reach the server is not a like
+      setPosts((all) => all.map((p) => (p.id === postId
+        ? { ...p, hearted: wasLiked, hearts: Math.max(0, p.hearts - delta) } : p)));
+    }
+  };
+
+  return (
+    <div className="mt-9">
+      <Reveal className="mb-4">
+        <h2 className="text-lg font-extrabold tracking-tight text-ink">Community</h2>
+        <p className="text-sm text-ink-muted">
+          Mothers at your stage, with midwives and doctors answering — moderated and clinician-reviewed.
+        </p>
+      </Reveal>
+
+      <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
+        <div>
+          {/* search + ask */}
+          <Reveal>
+            <GlassCard className="p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search questions and experiences…"
+                    className="h-11 w-full rounded-2xl border border-white/60 bg-white/70 pl-10 pr-4 text-sm font-medium text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20"
+                  />
+                </div>
+                <LiquidButton
+                  onClick={() => setComposing((v) => !v)}
+                  icon={composing ? <X className="h-[18px] w-[18px]" /> : <Plus className="h-[18px] w-[18px]" />}
+                >
+                  {composing ? 'Cancel' : 'Ask a question'}
+                </LiquidButton>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {FILTERS.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setFilter(t)}
+                    className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition',
+                      filter === t ? 'border-brand-500/40 bg-brand-500/15 text-brand-700'
+                        : 'border-white/60 bg-white/60 text-ink-soft hover:bg-white')}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
+          </Reveal>
+
+          {/* composer — rules appear alongside */}
+          <AnimatePresence>
+            {composing && (
+              <motion.div
+                key="composer"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+              >
+                <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_18rem]">
+                  <GlassCard float className="p-5">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar name={me.name} role="mother" photo={me.avatar} />
+                      <div>
+                        <div className="text-sm font-bold text-ink">{me.name}</div>
+                        <div className="text-[11px] font-semibold text-ink-faint">Week {week} · posting as a mother</div>
+                      </div>
+                    </div>
+
+                    <input
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Your question in one line…"
+                      className="mt-4 h-11 w-full rounded-2xl border border-white/60 bg-white/70 px-4 text-sm font-bold text-ink outline-none transition placeholder:font-medium placeholder:text-ink-faint focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20"
+                    />
+                    <textarea
+                      value={body}
+                      onChange={(e) => setBody(e.target.value)}
+                      rows={4}
+                      placeholder="Add the details — what you’ve tried, how long it’s been…"
+                      className="mt-2 w-full resize-none rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-sm font-medium text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20"
+                    />
+
+                    {/* image preview */}
+                    <AnimatePresence>
+                      {image && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }}
+                          className="relative mt-3 overflow-hidden rounded-2xl border border-white/60"
+                        >
+                          <img src={image} alt="Attached" className="max-h-64 w-full object-cover" />
+                          <button
+                            onClick={() => setImage(null)}
+                            aria-label="Remove image"
+                            className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-xl bg-ink/60 text-white backdrop-blur-md transition hover:bg-ink/80"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => pickImage(e.target.files?.[0])}
+                      />
+                      <button
+                        onClick={() => fileRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/60 bg-white/60 px-3 py-2 text-xs font-bold text-ink-soft transition hover:bg-white hover:text-ink"
+                      >
+                        <ImagePlus className="h-4 w-4" /> {image ? 'Change photo' : 'Add photo'}
+                      </button>
+
+                      <select
+                        value={topic}
+                        onChange={(e) => setTopic(e.target.value)}
+                        className="rounded-xl border border-white/60 bg-white/60 px-3 py-2 text-xs font-bold text-ink-soft outline-none transition hover:bg-white focus:border-brand-400"
+                      >
+                        {TOPICS.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+
+                      <div className="ml-auto flex gap-2">
+                        <LiquidButton variant="ghost" size="sm" onClick={resetComposer}>Cancel</LiquidButton>
+                        <LiquidButton size="sm" onClick={publish} icon={<Send className="h-4 w-4" />}>Post</LiquidButton>
+                      </div>
+                    </div>
+                  </GlassCard>
+
+                  <RulesNote />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* posts */}
+          <div className="mt-4 space-y-4">
+            <AnimatePresence initial={false}>
+              {visible.slice(0, shown).map((p) => {
+                const role = ROLE_META[p.role];
+                // her own heart comes from the server, not from a local guess
+                const isLiked = Boolean(p.hearted);
+                const threadOpen = openThread === p.id;
+                return (
+                  <motion.div
+                    key={p.id}
+                    layout
+                    initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.97 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+                  >
+                    <GlassCard float className="p-5">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={p.author} role={p.role} photo={p.author === me.name ? me.avatar : undefined} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-1.5">
+                            <span className="text-sm font-bold text-ink">{p.author}</span>
+                            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                              style={{ background: `${role.color}1f`, color: role.color }}>
+                              {role.label}
+                            </span>
+                            {p.week && (
+                              <span className="text-[11px] font-semibold text-ink-faint">
+                                week {p.week}{p.week === week && ' · same as you'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] font-medium text-ink-faint">{p.topic} · {p.ago}</div>
+                        </div>
+                        {p.clinicianAnswered && (
+                          <span className="inline-flex flex-none items-center gap-1 rounded-full bg-emerald-500/12 px-2 py-1 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-500/25">
+                            <BadgeCheck className="h-3 w-3" /> Clinician answered
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="mt-3 text-[15px] font-bold leading-snug text-ink">{p.title}</h3>
+                      {p.body && <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{p.body}</p>}
+
+                      {p.image && (
+                        <div className="mt-3 overflow-hidden rounded-2xl border border-white/60">
+                          <img src={p.image} alt="" className="max-h-80 w-full object-cover" />
+                        </div>
+                      )}
+
+                      <div className="mt-4 flex items-center gap-4">
+                        <button
+                          onClick={() => toggleHeart(p.id)}
+                          className={cn('inline-flex items-center gap-1.5 text-xs font-semibold transition-colors',
+                            isLiked ? 'text-rose-600' : 'text-ink-muted hover:text-ink')}
+                        >
+                          <motion.span animate={{ scale: isLiked ? [1, 1.35, 1] : 1 }} transition={{ duration: 0.3 }}>
+                            <Heart className={cn('h-4 w-4', isLiked && 'fill-current')} />
+                          </motion.span>
+                          {p.hearts + (isLiked ? 1 : 0)}
+                        </button>
+
+                        <button
+                          onClick={() => setOpenThread(threadOpen ? null : p.id)}
+                          className={cn('inline-flex items-center gap-1.5 text-xs font-semibold transition-colors',
+                            threadOpen ? 'text-brand-600' : 'text-ink-muted hover:text-ink')}
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                          {p.comments.length} {p.comments.length === 1 ? 'reply' : 'replies'}
+                        </button>
+
+                        {/*
+                          Deliberately last and deliberately quiet. Reporting
+                          has to be findable without being the loudest thing
+                          on a post somebody wrote about being frightened.
+                        */}
+                        <button
+                          onClick={() => !p.reported && setReporting({
+                            kind: 'posts', id: p.id, preview: p.title, author: p.author,
+                          })}
+                          disabled={p.reported}
+                          title={p.reported ? 'You have reported this' : 'Report this post'}
+                          className={cn('ml-auto inline-flex items-center gap-1.5 text-xs font-semibold transition-colors',
+                            p.reported ? 'text-ink-faint' : 'text-ink-faint hover:text-rose-600')}
+                        >
+                          <Flag className={cn('h-3.5 w-3.5', p.reported && 'fill-current')} />
+                          {p.reported ? 'Reported' : 'Report'}
+                        </button>
+                      </div>
+
+                      {/* comment thread */}
+                      <AnimatePresence>
+                        {threadOpen && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                            className="overflow-hidden"
+                          >
+                            <div className="mt-4 space-y-2.5 border-t border-white/60 pt-4">
+                              {p.comments.map((c) => (
+                                <motion.div
+                                  key={c.id} layout
+                                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                                  className="flex gap-2.5 rounded-2xl border border-white/60 bg-white/55 px-3 py-2.5"
+                                >
+                                  <Avatar name={c.author} role={c.role} size={7} photo={c.author === me.name ? me.avatar : undefined} />
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-x-1.5">
+                                      <span className="text-[12px] font-bold text-ink">{c.author}</span>
+                                      <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                                        style={{ background: `${ROLE_META[c.role].color}1f`, color: ROLE_META[c.role].color }}>
+                                        {ROLE_META[c.role].label}
+                                      </span>
+                                      <span className="text-[10px] font-medium text-ink-faint">{c.ago}</span>
+                                    </div>
+                                    <p className={cn('mt-0.5 text-[12px] leading-relaxed',
+                                      c.removed ? 'italic text-ink-faint' : 'text-ink-soft')}>
+                                      {c.body}
+                                    </p>
+                                  </div>
+
+                                  {/* a removed reply has nothing left to report */}
+                                  {!c.removed && (
+                                    <button
+                                      onClick={() => !c.reported && setReporting({
+                                        kind: 'comments', id: c.id, preview: c.body, author: c.author,
+                                      })}
+                                      disabled={c.reported}
+                                      title={c.reported ? 'You have reported this' : 'Report this reply'}
+                                      className={cn('ml-auto self-start rounded-lg p-1 transition-colors',
+                                        c.reported ? 'text-ink-faint' : 'text-ink-faint/60 hover:text-rose-600')}
+                                    >
+                                      <Flag className={cn('h-3 w-3', c.reported && 'fill-current')} />
+                                    </button>
+                                  )}
+                                </motion.div>
+                              ))}
+
+                              {p.comments.length === 0 && (
+                                <p className="text-[12px] font-medium text-ink-faint">
+                                  No replies yet — be the first to help.
+                                </p>
+                              )}
+
+                              {/* add a comment */}
+                              <div className="flex items-center gap-2 pt-1">
+                                <Avatar name={me.name} role="mother" size={7} photo={me.avatar} />
+                                <input
+                                  value={drafts[p.id] || ''}
+                                  onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
+                                  onKeyDown={(e) => e.key === 'Enter' && addComment(p.id)}
+                                  placeholder="Write a kind reply…"
+                                  className="h-10 flex-1 rounded-2xl border border-white/60 bg-white/70 px-3.5 text-[13px] font-medium text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20"
+                                />
+                                <button
+                                  onClick={() => addComment(p.id)}
+                                  disabled={!(drafts[p.id] || '').trim()}
+                                  aria-label="Post reply"
+                                  className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-glow transition disabled:opacity-40"
+                                >
+                                  <Send className="h-4 w-4" />
+                                </button>
+                              </div>
+
+                              <p className="pt-1 text-[10px] font-medium text-ink-faint">
+                                Be respectful. Share experience, not medical advice.
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </GlassCard>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+
+            {visible.length === 0 && (
+              <div className="rounded-3xl border border-dashed border-ink/15 px-4 py-12 text-center text-sm font-medium text-ink-faint">
+                No posts match that search.
+              </div>
+            )}
+          </div>
+
+          {/* only a page at a time — the feed can run to thousands of posts */}
+          {visible.length > shown && shown < MAX_SHOWN && (
+            <div className="mt-4 flex flex-col items-center gap-2">
+              <button
+                onClick={() => setShown((n) => Math.min(n + PAGE, MAX_SHOWN))}
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/60 bg-white/70 px-5 py-3 text-sm font-bold text-ink-soft shadow-soft transition hover:bg-white hover:text-ink"
+              >
+                <ChevronDown className="h-4 w-4" />
+                Load {Math.min(PAGE, visible.length - shown, MAX_SHOWN - shown)} more
+              </button>
+              <span className="text-[11px] font-semibold text-ink-faint">
+                Showing {Math.min(shown, visible.length)} of {visible.length}
+              </span>
+            </div>
+          )}
+
+          {shown >= MAX_SHOWN && visible.length > MAX_SHOWN && (
+            <div className="mt-4 rounded-2xl border border-dashed border-ink/15 px-4 py-4 text-center">
+              <p className="text-[12px] font-semibold text-ink-muted">
+                That’s the most we load at once — search or filter by topic to find something specific.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* sidebar */}
+        <div className="space-y-5">
+          <Reveal>
+            <GlassCard float className="p-5">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: `${C.violet}1f`, color: C.violet }}>
+                  <Users className="h-[18px] w-[18px]" />
+                </span>
+                <div>
+                  <div className="text-sm font-bold text-ink">Your week group</div>
+                  <div className="text-xs text-ink-muted">
+                    {group?.week
+                      ? `Weeks ${Math.max(1, group.week - group.spread)}–${group.week + group.spread}`
+                      : 'Everyone on the board'}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                {[
+                  { n: group ? group.mothers.toLocaleString() : '—', l: 'Mothers' },
+                  { n: group ? group.clinicians.toLocaleString() : '—', l: 'Clinicians' },
+                  {
+                    n: group ? (group.answeredPct === null ? '—' : `${group.answeredPct}%`) : '—',
+                    l: 'Answered',
+                  },
+                ].map((s) => (
+                  <div key={s.l} className="rounded-2xl border border-white/60 bg-white/55 py-3">
+                    <div className="text-lg font-extrabold text-ink">{s.n}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">{s.l}</div>
+                  </div>
+                ))}
+              </div>
+              {/* say what the middle figure counts — "36 clinicians" is
+                  meaningless without knowing 36 of what */}
+              {group && (
+                <p className="mt-2.5 text-[10.5px] leading-relaxed text-ink-faint">
+                  {group.clinicians === 0
+                    ? 'No clinician has written here yet.'
+                    : `People who have posted or replied, counted once each — ${group.answeredPosts} of ${group.posts} posts have a clinician's answer.`}
+                </p>
+              )}
+            </GlassCard>
+          </Reveal>
+
+          {/* reading — glossy, stage-aware, each opens a full article */}
+          <Reveal delay={0.1}>
+            <GlassCard float className="relative overflow-hidden p-5">
+              <BeamsBackground intensity="medium" count={12} />
+              <div className="relative flex items-center gap-2.5">
+                <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: `${C.peach}1f`, color: C.peach }}>
+                  <BookOpen className="h-[18px] w-[18px]" />
+                </span>
+                <div>
+                  <div className="text-sm font-bold text-ink">{reading.heading}</div>
+                  <div className="text-[11px] text-ink-muted">{reading.sub}</div>
+                </div>
+              </div>
+              <div className="relative mt-3 space-y-2">
+                {reading.items.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => setArticle(a)}
+                    className="group flex w-full items-center gap-2 rounded-2xl border border-white/70 bg-white/70 px-3 py-2.5 text-left backdrop-blur-md transition hover:bg-white"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-bold text-ink-soft group-hover:text-ink">{a.title}</span>
+                      <span className="flex flex-wrap items-center gap-x-1.5 text-[10px] font-semibold text-ink-faint">
+                        {a.readMins} min read
+                        {/* why the week put this here, when the week is the reason */}
+                        {a.timing && (
+                          <>
+                            <span aria-hidden>&middot;</span>
+                            <span className="text-brand-600">{a.timing}</span>
+                          </>
+                        )}
+                      </span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 flex-none text-ink-faint transition group-hover:translate-x-0.5 group-hover:text-brand-600" />
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
+          </Reveal>
+
+          {/* trending, ranked against her own logged symptoms and history */}
+          <Reveal delay={0.15}>
+            <GlassCard float className="p-5">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: `${C.brand}1f`, color: C.brand }}>
+                  <Newspaper className="h-[18px] w-[18px]" />
+                </span>
+                <div>
+                  <div className="text-sm font-bold text-ink">Trending news for you</div>
+                  <div className="text-[11px] text-ink-muted">Matched to your week, symptoms and history</div>
+                </div>
+              </div>
+
+              <div className="mt-3 divide-y divide-white/60">
+                {news.slice(0, newsShown).map((n, i) => (
+                  <motion.a
+                    key={n.id}
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i % NEWS_PAGE, 4) * 0.05, duration: 0.35 }}
+                    className="group flex w-full gap-3 py-3 text-left first:pt-1"
+                  >
+                    <NewsThumb image={n.image} className="h-[74px] w-[86px] flex-none transition group-hover:brightness-110" />
+
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-x-1.5">
+                        <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide"
+                          style={{ background: `${KIND_TINT[n.kind]}1f`, color: KIND_TINT[n.kind] }}>
+                          {n.category}
+                        </span>
+                        <span className="text-[10px] font-semibold text-ink-faint">{n.source} · {n.ago}</span>
+                      </span>
+
+                      <span className="mt-1 flex items-start gap-1">
+                        <span className="min-w-0 flex-1 text-[12px] font-bold leading-snug text-ink group-hover:text-brand-700">
+                          {n.title}
+                        </span>
+                        <ExternalLink className="mt-[3px] h-3 w-3 flex-none text-ink-faint opacity-0 transition group-hover:opacity-100" />
+                      </span>
+
+                      <span className="mt-0.5 line-clamp-2 block text-[11px] leading-relaxed text-ink-muted">{n.summary}</span>
+
+                      {n.reason && (
+                        <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[9px] font-bold text-brand-700">
+                          <Sparkles className="h-2.5 w-2.5" /> {n.reason}
+                        </span>
+                      )}
+                    </span>
+                  </motion.a>
+                ))}
+              </div>
+
+              {newsShown < news.length ? (
+                <button
+                  onClick={() => setNewsShown((n) => n + NEWS_PAGE)}
+                  className="mt-3 w-full rounded-2xl border border-white/70 bg-white/60 py-2.5 text-[12px] font-bold text-ink-soft transition hover:bg-white hover:text-ink"
+                >
+                  Load more news{' '}
+                  <span className="font-semibold text-ink-faint">({news.length - newsShown} more)</span>
+                </button>
+              ) : (
+                <p className="mt-3 text-center text-[11px] font-semibold text-ink-faint">
+                  That’s everything for your stage this week.
+                </p>
+              )}
+            </GlassCard>
+          </Reveal>
+        </div>
+      </div>
+
+      <ArticleModal article={article} onClose={() => setArticle(null)} />
+
+      <ReportDialog
+        target={reporting}
+        reasons={reasons}
+        onClose={() => setReporting(null)}
+        onFiled={markReported}
+      />
+    </div>
+  );
+}
