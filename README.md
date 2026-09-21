@@ -48,10 +48,10 @@ Express + PostgreSQL backend.
 | Piece | Where | What it is | Its own README |
 |---|---|---|---|
 | **Backend API** | `app.js`, `models/`, `controllers/`, `routes/`, `middleware/`, `db/` | Express MVC. Owns every rule and every row: the Models (data access + domain logic) and thin JSON Controllers. Serves the built website, the guardian bundle and the APK downloads. PostgreSQL on Supabase. | this file, [below](#the-backend) |
-| **Web client** | `frontend/` | React + TypeScript SPA: the public site, the **mother's portal** and the **clinician's portal**. The only View for those two roles. | [frontend/README.md](frontend/README.md) |
-| **Android app** | `frontend/android/` | The same React bundle wrapped by Capacitor: server address on the sign-in screen, bearer-token sessions, Android alarms for reminders, share-sheet downloads, and a **home-screen widget**. | [frontend/android/README.md](frontend/android/README.md) |
-| **Guardian app** | `guardian-app/` | A separate, small app for the people a mother nominates: her week, her readings, what to do about them — and a full-volume alarm through silent mode when she presses SOS. Pairs with a link; no account. | [guardian-app/README.md](guardian-app/README.md) |
-| **Risk model service** | `ml-service/` | Optional FastAPI + scikit-learn classifier (random forest on the UCI Maternal Health Risk data). The app works without it and says so. | [ml-service/README.md](ml-service/README.md) |
+| **Web client** | `frontend/` | React + TypeScript SPA: the public site, the **mother's portal** and the **clinician's portal**. The only View for those two roles. | [MaternalCare-WebApp/frontend/README.md](MaternalCare-WebApp/frontend/README.md) |
+| **Android app** | `frontend/android/` | The same React bundle wrapped by Capacitor: server address on the sign-in screen, bearer-token sessions, Android alarms for reminders, share-sheet downloads, and a **home-screen widget**. | [MaternalCare-App/README.md](MaternalCare-App/README.md) |
+| **Guardian app** | `guardian-app/` | A separate, small app for the people a mother nominates: her week, her readings, what to do about them — and a full-volume alarm through silent mode when she presses SOS. Pairs with a link; no account. | [Guardian-App/README.md](Guardian-App/README.md) |
+| **Risk model service** | `ml-service/` | Optional FastAPI + scikit-learn classifier (random forest on the UCI Maternal Health Risk data). The app works without it and says so. | [MaternalCare-WebApp/ml-service/README.md](MaternalCare-WebApp/ml-service/README.md) |
 
 ## Architecture
 
@@ -379,7 +379,7 @@ Set `NODE_ENV=production` behind a TLS-terminating proxy, build the client
 and leave `CLIENT_ORIGIN` unset unless the client is hosted elsewhere.
 `.env.example` documents every variable.
 
-**Render:** [`render.yaml`](render.yaml) is a Blueprint for exactly that —
+**Render:** [render.yaml](MaternalCare-WebApp/render.yaml) is a Blueprint for exactly that —
 push the repository to GitHub, *New → Blueprint*, pick the repo, and paste
 `DATABASE_URL` and a VAPID key pair when asked. Two limits of the free plan,
 both explained in the file: uploaded files live on a disk that is wiped on
