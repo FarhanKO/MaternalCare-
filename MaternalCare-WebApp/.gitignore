@@ -32,8 +32,10 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# APKs are build artifacts (npm run apk in frontend/ and guardian-app/)
-public/downloads/*.apk
+# The APKs in public/downloads are committed on purpose: the server serves them
+# at /downloads/*.apk (the SOS screen links guardian.apk) and a Render build
+# cannot make them — it has no Android SDK. Rebuild with `npm run apk` in
+# frontend/ and guardian-app/, then commit the new files.
 
 # Python local environments / caches
 .venv/
