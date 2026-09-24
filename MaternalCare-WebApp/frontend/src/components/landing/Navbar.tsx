@@ -1,8 +1,9 @@
 import { motion, AnimatePresence, useScroll, useMotionValueEvent } from 'framer-motion';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Activity, LogOut, Menu, X } from 'lucide-react';
+import { Activity, ChevronDown, Download, LogOut, Menu, X } from 'lucide-react';
 import { LiquidButton } from '@/components/ui/LiquidButton';
+import { ANDROID_APPS, appDownloadUrl, type AndroidApp } from '@/data/apps';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { spring } from '@/lib/motion';
@@ -74,6 +75,27 @@ export function Navbar() {
     else navigate('/');
   };
 
+  /*
+   * "Get the app": a small menu offering the two APKs, each link downloading
+   * straight away. Not in the app — she already has it. Closes on a pick, a
+   * click anywhere else, or Escape.
+   */
+  const [appsOpen, setAppsOpen] = useState(false);
+  const appsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!appsOpen) return;
+    const away = (e: PointerEvent) => {
+      if (!appsRef.current?.contains(e.target as Node)) setAppsOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setAppsOpen(false);
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [appsOpen]);
+
   return (
     <motion.header
       initial={{ y: -80, opacity: 0 }}
@@ -100,14 +122,14 @@ export function Navbar() {
         </button>
 
         {/* desktop links — sliding pill indicator follows hover / active */}
-        <div className="relative ml-auto hidden items-center gap-1 md:flex" onMouseLeave={() => setHovered(null)}>
+        <div className="relative ml-auto hidden items-center gap-1 lg:flex" onMouseLeave={() => setHovered(null)}>
           {links.map((l, i) => (
             <button
               key={l.href}
               onMouseEnter={() => setHovered(i)}
               onClick={() => go(l)}
               className={cn(
-                'relative rounded-xl px-3.5 py-2 text-sm font-medium transition-colors duration-200',
+                'relative whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-medium transition-colors duration-200',
                 showIndex === i ? 'text-ink' : 'text-ink-soft hover:text-ink',
               )}
             >
@@ -123,7 +145,43 @@ export function Navbar() {
           ))}
         </div>
 
-        <div className="ml-auto hidden items-center gap-2 md:ml-2 md:flex">
+        <div className="ml-auto hidden items-center gap-2 lg:ml-2 lg:flex">
+          {!isNative && (
+            <div ref={appsRef} className="relative">
+              <button
+                onClick={() => setAppsOpen((v) => !v)}
+                aria-expanded={appsOpen}
+                aria-haspopup="menu"
+                className={cn(
+                  'inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold transition-colors',
+                  appsOpen ? 'bg-white/75 text-ink' : 'text-ink-soft hover:bg-white/60 hover:text-ink',
+                )}
+              >
+                <Download className="h-4 w-4" />
+                Get the app
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', appsOpen && 'rotate-180')} />
+              </button>
+              <AnimatePresence>
+                {appsOpen && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                    transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                    className="absolute right-0 top-full mt-2 w-64 origin-top-right rounded-2xl glass-strong p-1.5 shadow-float"
+                  >
+                    <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+                      Android apps
+                    </div>
+                    {ANDROID_APPS.map((a) => (
+                      <AppDownload key={a.file} app={a} onPick={() => setAppsOpen(false)} />
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
           {user ? (
             <>
               {!onPortal && (
@@ -150,7 +208,7 @@ export function Navbar() {
         {/* mobile toggle */}
         <button
           onClick={() => setOpen((v) => !v)}
-          className="ml-auto grid h-10 w-10 place-items-center rounded-xl glass-strong text-ink md:hidden"
+          className="ml-auto grid h-10 w-10 place-items-center rounded-xl glass-strong text-ink lg:hidden"
           aria-label="Menu"
         >
           {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -165,7 +223,7 @@ export function Navbar() {
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             exit={{ opacity: 0, y: -12, filter: 'blur(8px)' }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute inset-x-4 top-[76px] rounded-3xl glass-strong p-4 shadow-glass md:hidden"
+            className="absolute inset-x-4 top-[76px] rounded-3xl glass-strong p-4 shadow-glass lg:hidden"
           >
             <div className="flex flex-col gap-1">
               {links.map((l) => (
@@ -182,6 +240,16 @@ export function Navbar() {
                   {l.label}
                 </button>
               ))}
+              {!isNative && (
+                <div className="mt-1 border-t border-white/60 pt-2">
+                  <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+                    Get the app
+                  </div>
+                  {ANDROID_APPS.map((a) => (
+                    <AppDownload key={a.file} app={a} onPick={() => setOpen(false)} />
+                  ))}
+                </div>
+              )}
               <div className="mt-2 flex gap-2">
                 {user ? (
                   <>
@@ -210,5 +278,27 @@ export function Navbar() {
         )}
       </AnimatePresence>
     </motion.header>
+  );
+}
+
+/** One row of the "Get the app" menu: a plain link that downloads the APK. */
+function AppDownload({ app, onPick }: { app: AndroidApp; onPick: () => void }) {
+  return (
+    <a
+      role="menuitem"
+      href={appDownloadUrl(app)}
+      download={app.file}
+      onClick={onPick}
+      className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors hover:bg-white/80"
+    >
+      <span className="grid h-8 w-8 flex-none place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700">
+        <app.icon className="h-4 w-4 text-white" strokeWidth={2.2} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-bold leading-tight text-ink">{app.label}</span>
+        <span className="block truncate text-[11px] font-medium text-ink-soft">{app.note}</span>
+      </span>
+      <Download className="h-4 w-4 flex-none text-brand-500" />
+    </a>
   );
 }
