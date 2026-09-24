@@ -1,0 +1,85 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# One web service: Express (MaternalCare-WebApp) serves the API, the built
+# React client and the Guardian web companion from the same origin, so there
+# is no CORS, no CLIENT_ORIGIN and the session cookie works as designed. The
+# database stays on Supabase.
+#
+# This file sits at the repository root because Render looks for it there.
+# The service runs inside MaternalCare-WebApp (rootDir); the Guardian app is
+# its own folder beside it, so the build compiles it there and copies the
+# result to MaternalCare-WebApp/guardian-app/dist, which app.js serves at
+# /guardian-app.
+#
+# Deploy: Render → New → Blueprint → pick the repo. It reads this file, asks
+# for the values marked `sync: false` and builds.
+#
+# Two things the free plan cannot give this app, and what to do about them:
+#
+#   Uploaded files. Prescriptions, chat photos and avatars are written under
+#   data/uploads. Render's filesystem is wiped on every deploy and restart,
+#   so on the free plan every upload is lost within days — the app already
+#   says "this is gone" rather than showing a broken image, but it is gone.
+#   A persistent disk (the `disk` block below, Starter plan or above) fixes
+#   it; uncomment it when the plan allows.
+#
+#   Sleeping. A free instance idles after fifteen minutes, so the once-a-day
+#   purge of deleted accounts and the every-minute reminder push only run
+#   while somebody is using the site. Reminders will be late. A paid instance
+#   stays up; alternatively a Render cron job can hit the site each minute.
+services:
+  - type: web
+    name: maternalcare
+    runtime: node
+    plan: free
+    rootDir: MaternalCare-WebApp
+    # with a rootDir Render only redeploys for changes inside it; the Guardian
+    # web app is built into this service too, so its changes count as well
+    buildFilter:
+      paths:
+        - MaternalCare-WebApp/**
+        - Guardian-App/**
+    # NODE_ENV=production makes npm skip devDependencies, and both client
+    # builds need them (vite, typescript) — hence --include=dev.
+    buildCommand: >-
+      npm ci
+      && npm --prefix frontend ci --include=dev && npm --prefix frontend run build
+      && npm --prefix ../Guardian-App ci --include=dev && npm --prefix ../Guardian-App run build
+      && rm -rf guardian-app && mkdir -p guardian-app && cp -r ../Guardian-App/dist guardian-app/dist
+    startCommand: npm start
+    # answers 200 with { user: null } for nobody — proves the process and the
+    # database are both up without needing a session
+    healthCheckPath: /api/auth/session
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      # turns on: https redirect + HSTS, the __Host- cookie, same-origin-only
+      # CORS, and hides the demo-account list on the sign-in screen
+      - key: NODE_ENV
+        value: production
+      # Supabase → Settings → Database → Connection string → Session pooler
+      - key: DATABASE_URL
+        sync: false
+      # Make one pair once: `npx web-push generate-vapid-keys`. Every browser's
+      # push subscription is bound to the public key, so a pair generated on
+      # the server would change on every deploy and silently unsubscribe everyone.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        value: mailto:hello@maternalcare.app
+      # optional — the FastAPI classifier, if it is deployed as its own service
+      # (see ml-service/README.md). Unset, the risk screen uses the rule engine.
+      # - key: ML_SERVICE_URL
+      #   value: https://maternalcare-ml.onrender.com
+      # optional — speech to text for the symptom logger
+      # - key: OPENAI_API_KEY
+      #   sync: false
+    # Persistent storage for data/uploads and data/vapid.json. Not available
+    # on the free plan; uncomment on Starter or above.
+    # disk:
+    #   name: maternalcare-data
+    #   mountPath: /opt/render/project/src/MaternalCare-WebApp/data
+    #   sizeGB: 1
