@@ -26,9 +26,14 @@ services:
     name: maternalcare
     runtime: node
     plan: free
-    # NODE_ENV=production makes npm skip devDependencies, and the client
-    # build needs them (vite, typescript) — hence --include=dev
-    buildCommand: npm ci && npm --prefix frontend ci --include=dev && npm --prefix frontend run build
+    # NODE_ENV=production makes npm skip devDependencies, and both client
+    # builds need them (vite, typescript) — hence --include=dev. The guardian
+    # bundle is built too: app.js serves /guardian-app only when
+    # guardian-app/dist exists, and dist/ is never committed.
+    buildCommand: >-
+      npm ci
+      && npm --prefix frontend ci --include=dev && npm --prefix frontend run build
+      && npm --prefix guardian-app ci --include=dev && npm --prefix guardian-app run build
     startCommand: npm start
     # answers 200 with { user: null } for nobody — proves the process and the
     # database are both up without needing a session
