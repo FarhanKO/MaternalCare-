@@ -62,6 +62,8 @@ app.disable('x-powered-by');
  */
 app.set('query parser', 'simple');
 
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok', uptime: process.uptime() }));
+
 /* in production, nothing else answers a request that arrived over plain http */
 app.use(enforceTls());
 
