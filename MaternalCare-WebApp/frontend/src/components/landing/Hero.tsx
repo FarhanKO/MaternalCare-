@@ -1,13 +1,16 @@
 import { motion } from 'framer-motion';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Play } from 'lucide-react';
 import { LiquidButton } from '@/components/ui/LiquidButton';
 import { HeroImageCarousel } from './HeroImageCarousel';
 import { FlowingLines } from './FlowingLines';
+import { TourModal } from './TourModal';
 import { staggerContainer, fadeUp } from '@/lib/motion';
 
 export function Hero() {
   const navigate = useNavigate();
+  const [tourOpen, setTourOpen] = useState(false);
   return (
     <section id="top" className="relative px-3 pb-24 pt-24 sm:px-5">
       <div className="relative mx-auto max-w-[1380px]">
@@ -49,12 +52,13 @@ export function Hero() {
                 <LiquidButton size="lg" onClick={() => navigate('/register')} iconRight={<ArrowRight className="h-[18px] w-[18px]" />}>
                   Start monitoring
                 </LiquidButton>
-                <LiquidButton variant="glass" size="lg" icon={<Play className="h-[16px] w-[16px] fill-current" />}>
+                <LiquidButton variant="glass" size="lg" onClick={() => setTourOpen(true)} icon={<Play className="h-[16px] w-[16px] fill-current" />}>
                   Watch the tour
                 </LiquidButton>
               </motion.div>
             </motion.div>
           </div>
+          <TourModal open={tourOpen} onClose={() => setTourOpen(false)} />
 
           {/* animated flowing lines woven across the bottom of the image */}
           <FlowingLines className="absolute inset-x-0 bottom-0 z-10 h-36 opacity-90" />
