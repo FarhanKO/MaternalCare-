@@ -22,6 +22,7 @@ interface Ctx {
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   refresh: () => void;
+  acceptSession: (user: AuthUser) => void;
 }
 
 const AuthContext = createContext<Ctx | null>(null);
@@ -44,7 +45,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
     return u;
   }, []);
-
+  const acceptSession = useCallback((u: AuthUser) => {
+    setUser(u);
+    setLoading(false);
+  }, []);
   const signOut = useCallback(async () => {
     try {
       await api.logout();
@@ -54,8 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, signIn, signOut, refresh }),
-    [user, loading, signIn, signOut, refresh],
+    () => ({ user, loading, signIn, signOut, refresh, acceptSession }),
+    [user, loading, signIn, signOut, refresh, acceptSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
