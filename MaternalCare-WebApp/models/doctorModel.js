@@ -237,8 +237,10 @@ function toDTO(d) {
     load: Math.round(load * 100) / 100,
     /** open | busy | full | away */
     status,
-    /** true when a request can be sent at all */
-    bookable: Boolean(d.available) && openings > 0,
+    /** true when a request can be sent at all — never before a licence check */
+    bookable: Boolean(d.verified_at) && Boolean(d.available) && openings > 0,
+    /** verified | pending | rejected — set by an admin after checking the licence */
+    verification: d.verified_at ? 'verified' : d.rejected_at ? 'rejected' : 'pending',
   };
 }
 
@@ -282,8 +284,9 @@ module.exports = {
    * writes what is on their certificate, not what fits our dropdown.
    *
    * Nothing here is a credential check. We store what they claim and the
-   * licence number they claim it under; the interface says exactly that
-   * rather than implying an approval step that nobody is performing.
+   * licence number they claim it under, and the new clinician stays out of
+   * the directory (`verified_at` is null) until an admin has checked that
+   * licence on the admin page.
    */
   async register(input = {}) {
     const name = clean(input.name, 120);
@@ -351,14 +354,59 @@ module.exports = {
     }
   },
 
+  /** The public directory: only clinicians an admin has verified. */
   async all() {
-    const rows = await db.sql(`${WITH_COUNTS} ORDER BY d.id`);
+    const rows = await db.sql(`${WITH_COUNTS} WHERE d.verified_at IS NOT NULL ORDER BY d.id`);
     return rows.map(toDTO);
   },
 
   async find(id) {
     const row = await db.one(`${WITH_COUNTS} WHERE d.id = $1`, [id]);
     return row ? toDTO(row) : null;
+  },
+
+  /** For the admin page: everyone, newest registrations first, with contact details. */
+  async forReview({ state = 'pending' } = {}) {
+    const where = {
+      pending: 'd.verified_at IS NULL AND d.rejected_at IS NULL',
+      verified: 'd.verified_at IS NOT NULL',
+      rejected: 'd.rejected_at IS NOT NULL',
+      all: 'TRUE',
+    }[state] || 'd.verified_at IS NULL AND d.rejected_at IS NULL';
+    const rows = await db.sql(
+      `${WITH_COUNTS} WHERE ${where} ORDER BY d.id DESC`,
+    );
+    return rows.map((row) => ({
+      ...toDTO(row),
+      email: row.email || null,
+      phone: row.phone || null,
+      licenseNo: row.license_no || null,
+      verifiedAt: row.verified_at || null,
+      rejectedAt: row.rejected_at || null,
+      rejectionNote: row.rejection_note || null,
+    }));
+  },
+
+  /** An admin confirms the licence. Clears any earlier rejection. */
+  async verify(id, adminUserId) {
+    const row = await db.one(
+      `UPDATE doctors SET verified_at = now(), verified_by = $2, rejected_at = NULL, rejection_note = NULL
+        WHERE id = $1 RETURNING id`,
+      [id, adminUserId],
+    );
+    return row ? this.find(row.id) : null;
+  },
+
+  /** An admin could not confirm the licence: hidden, unbookable, told why. */
+  async reject(id, adminUserId, note) {
+    const reason = clean(note, 500);
+    if (reason.length < 5) throw invalid('note', 'Say why, so the clinician knows what to fix');
+    const row = await db.one(
+      `UPDATE doctors SET verified_at = NULL, verified_by = $2, rejected_at = now(), rejection_note = $3
+        WHERE id = $1 RETURNING id`,
+      [id, adminUserId, reason],
+    );
+    return row ? this.find(row.id) : null;
   },
 
   async forUser(userId) {
@@ -371,6 +419,7 @@ module.exports = {
       phone: row.phone || null,
       licenseNo: row.license_no || null,
       available: Boolean(row.available),
+      rejectionNote: row.rejection_note || null,
     };
   },
 
@@ -448,7 +497,7 @@ module.exports = {
    *   0 — right specialty and able to take her
    *   1 — able to take her, but a different specialty
    *   2 — full or on leave
-   * Nobody is hidden; the tier is returned so the UI can say why.
+   * Only verified clinicians are ranked; the tier is returned so the UI can say why.
    */
   async recommend({ stage } = {}) {
     const pattern = SPECIALTY_FOR[stage];

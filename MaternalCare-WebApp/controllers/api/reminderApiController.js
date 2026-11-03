@@ -35,7 +35,8 @@ exports.create = async (req, res) => {
 exports.destroy = async (req, res, next) => {
   try {
     const user = await userModel.current();
-    const reminder = await reminderModel.find(req.params.id);
+    // scoped to her: another mother's reminder answered 204 and named its doctor
+    const reminder = await reminderModel.find(req.params.id, user.id);
     if (!reminder) return res.status(404).json({ error: 'Reminder not found' });
     if (reminder.assignedBy) {
       return res.status(403).json({ error: `Only ${reminder.assignedBy} can remove this` });

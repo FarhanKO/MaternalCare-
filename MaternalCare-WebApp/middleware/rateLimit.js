@@ -91,6 +91,16 @@ const byEmail = (req) => {
   return typeof email === 'string' && email.trim() ? `account:${email.trim().toLowerCase()}` : null;
 };
 
+/**
+ * The account a sign-in is aimed at, from one address. Counting failures per
+ * account alone let anyone lock a mother out — and away from her SOS button —
+ * just by typing her email with wrong passwords ten times.
+ */
+const byAddressAndEmail = (req) => {
+  const account = byEmail(req);
+  return account ? `${byAddress(req)}|${account}` : null;
+};
+
 /** The signed-in user, for the routes that re-check her password. */
 const byUser = (req) => (req.user ? `user:${req.user.id}` : null);
 
@@ -100,10 +110,27 @@ const ONE_HOUR = 60 * 60 * 1000;
 module.exports = {
   limiter,
 
-  /** POST /auth/login — 30 wrong guesses per address, 10 per account, per quarter hour. */
+  /**
+   * POST /auth/login — per quarter hour: 30 wrong guesses per address, 10 per
+   * account from one address, and a high backstop of 100 per account from
+   * everywhere, which slows a spread-out attack without letting one stranger
+   * lock her out.
+   */
   login: [
     limiter({ name: 'login by address', windowMs: FIFTEEN_MINUTES, max: 30, key: byAddress }),
-    limiter({ name: 'login by account', windowMs: FIFTEEN_MINUTES, max: 10, key: byEmail }),
+    limiter({ name: 'login by address+account', windowMs: FIFTEEN_MINUTES, max: 10, key: byAddressAndEmail }),
+    limiter({ name: 'login by account', windowMs: FIFTEEN_MINUTES, max: 100, key: byEmail }),
+  ],
+
+  /** POST /auth/forgot — every request counts: 5 per address, 3 per account, an hour. */
+  forgot: [
+    limiter({ name: 'reset by address', windowMs: ONE_HOUR, max: 5, key: byAddress, count: 'all' }),
+    limiter({ name: 'reset by account', windowMs: ONE_HOUR, max: 3, key: byEmail, count: 'all' }),
+  ],
+
+  /** POST /auth/reset — wrong or expired tokens, 20 per address an hour. */
+  reset: [
+    limiter({ name: 'reset token', windowMs: ONE_HOUR, max: 20, key: byAddress }),
   ],
 
   /** Routes that verify the current password of an account already signed in. */

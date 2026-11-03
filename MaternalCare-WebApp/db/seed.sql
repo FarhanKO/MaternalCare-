@@ -195,6 +195,10 @@ INSERT INTO doctors (name, specialty, rating,
    4.8, FALSE,  8, 'MBBS, MD (Paediatric Neurology)', 14, 20,
    'tanvir.alam@demo.maternalcare.app',    'DEMO-BMDC-1008');
 
+-- the demo roster counts as already checked by an admin (migration 0025);
+-- a clinician who registers through the form starts unverified
+UPDATE doctors SET verified_at = now() WHERE email LIKE '%@demo.maternalcare.app';
+
 UPDATE doctors d
 SET user_id = u.id
 FROM users u

@@ -7,7 +7,7 @@
 import { useEffect } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
-import { useAuth } from '@/lib/auth';
+import { portalFor, useAuth } from '@/lib/auth';
 import { onReminderTap } from '@/lib/localReminders';
 
 /**
@@ -23,7 +23,7 @@ export function AppHome() {
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user) return <Navigate to="/signin" replace />;
-  return <Navigate to={user.role === 'mother' ? '/mother' : '/doctor'} replace />;
+  return <Navigate to={portalFor(user.role)} replace />;
 }
 
 /* the screens the app opens on; from these, back means "close the app" */

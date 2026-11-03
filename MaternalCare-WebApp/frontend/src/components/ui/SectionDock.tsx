@@ -45,7 +45,9 @@ export function SectionDock<T extends string>({
         transition={{ type: 'spring', stiffness: 260, damping: 28, delay: 0.15 }}
         // wide enough for five tabs; the buttons below shrink rather than
         // spill out of the pill if a dock ever grows past that
-        className="pointer-events-auto flex w-full max-w-2xl items-center gap-1 rounded-2xl glass-strong p-1.5 shadow-float"
+        // six tabs (the clinician portal) were cut to "Overvi…", "Pa…" at 2xl
+        className={cn('pointer-events-auto flex w-full items-center gap-1 rounded-2xl glass-strong p-1.5 shadow-float',
+          items.length > 5 ? 'max-w-4xl' : 'max-w-2xl')}
       >
         {items.map((t) => {
           const isActive = active === t.key;
@@ -56,10 +58,12 @@ export function SectionDock<T extends string>({
               onClick={() => onChange(t.key)}
               aria-current={isActive ? 'page' : undefined}
               title={t.hint}
+              aria-label={t.label}
               className={cn(
                 // min-w-0 lets flex-1 actually shrink — without it the buttons
                 // keep their content width and overflow the rounded container
-                'relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2.5 py-2.5 text-sm font-semibold transition-colors duration-200',
+                // on a phone the label sits under the icon instead of vanishing
+                'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1.5 py-2 text-sm font-semibold transition-colors duration-200 sm:flex-row sm:gap-2 sm:px-2.5 sm:py-2.5',
                 isActive ? 'text-white' : 'text-ink-soft hover:text-ink',
               )}
             >
@@ -71,7 +75,7 @@ export function SectionDock<T extends string>({
                 />
               )}
               <t.icon className="h-4 w-4 flex-none" />
-              <span className="hidden truncate sm:inline">{t.label}</span>
+              <span className="block max-w-full truncate text-[10px] leading-tight sm:text-sm">{t.label}</span>
               {count != null && count > 0 && (
                 <span className={cn(
                   'ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',

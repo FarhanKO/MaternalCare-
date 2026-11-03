@@ -8,9 +8,23 @@
 const moderationModel = require('../../models/moderationModel');
 const doctorModel = require('../../models/doctorModel');
 
+/**
+ * Only a clinician whose licence an admin has verified may moderate. A newly
+ * registered account used to see and decide every report straight away.
+ * Admins may always moderate.
+ */
+async function mayModerate(req, res) {
+  if (req.user.role === 'admin') return true;
+  const doctor = await doctorModel.forUser(req.user.id);
+  if (doctor && doctor.verification === 'verified') return true;
+  res.status(403).json({ error: 'Moderation opens once your licence has been verified', code: 'NOT_VERIFIED' });
+  return false;
+}
+
 /** Everything waiting on a decision, grouped by the item reported. */
 exports.queue = async (req, res, next) => {
   try {
+    if (!(await mayModerate(req, res))) return undefined;
     const state = ['open', 'upheld', 'dismissed', 'all'].includes(req.query.state)
       ? req.query.state
       : 'open';
@@ -28,6 +42,7 @@ exports.queue = async (req, res, next) => {
 /** How many are waiting — for the badge on the portal's nav. */
 exports.count = async (req, res, next) => {
   try {
+    if (!(await mayModerate(req, res))) return undefined;
     return res.json({ data: { open: await moderationModel.openCount() } });
   } catch (err) { return next(err); }
 };
@@ -42,15 +57,15 @@ exports.count = async (req, res, next) => {
  */
 exports.resolve = async (req, res, next) => {
   try {
+    if (!(await mayModerate(req, res))) return undefined;
     const { action, note } = req.body || {};
     const doctor = await doctorModel.forUser(req.user.id);
-    if (!doctor) return res.status(403).json({ error: 'No clinician profile is linked to this account' });
     const result = await moderationModel.resolve({
       target: req.params.target === 'comments' ? 'comment' : 'post',
       id: req.params.id,
       action,
       note,
-      reviewerId: doctor.id,
+      reviewerId: doctor ? doctor.id : null,
     });
     return res.json({ data: result });
   } catch (err) {

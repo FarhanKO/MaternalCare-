@@ -111,13 +111,24 @@ export function Register() {
         'Parent of a young child': 'parent',
         'Planning a pregnancy': 'planning',
       };
+      // leaving this blank used to register her as pregnant without a word
+      if (!stageMap[stage]) {
+        setFieldError({ field: 'stage', message: 'Choose what describes you now — it decides your whole dashboard' });
+        return;
+      }
       setSubmitting(true);
       try {
         const user = await api.registerMother({
           name: value('m-name'), email: value('m-email'), phone: value('m-phone'),
-          password: value('m-password'), stage: stageMap[stage] || 'pregnant',
+          password: value('m-password'), stage: stageMap[stage],
+          // the due date she picked here was never sent, so her pregnancy had no dates
+          dueDate: isPregnant && due ? due : undefined,
           acceptedTerms: TERMS_VERSION,
         });
+        /*
+         * The server signed her in, but the app did not know: /onboarding's
+         * guard saw nobody, sent her to the sign-in page and dropped ?stage.
+         */
         acceptSession(user);
         navigate(`/onboarding?stage=${encodeURIComponent(stage || 'Pregnant')}`);
       } catch (err) {
@@ -305,6 +316,13 @@ export function Register() {
                   {isPregnant && (
                     <motion.div variants={fadeUp}>
                       <GlassDatePicker label="Expected due date" icon={<Calendar className="h-[18px] w-[18px]" />} accent={accent} value={due} onChange={setDue} />
+                    </motion.div>
+                  )}
+                  {fieldError && ['stage', 'dueDate', 'terms'].includes(fieldError.field ?? '') && (
+                    <motion.div variants={fadeUp} className="sm:col-span-2">
+                      <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] font-semibold text-rose-700">
+                        {fieldError.message}
+                      </div>
                     </motion.div>
                   )}
                 </>

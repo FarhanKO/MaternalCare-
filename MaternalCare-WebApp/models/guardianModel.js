@@ -71,7 +71,8 @@ async function resolve(token) {
  */
 async function context(motherId) {
   const [pregnancy, latest, symptoms] = await Promise.all([
-    db.one(`SELECT lmp, LEAST(42, FLOOR((CURRENT_DATE - lmp) / 7))::int AS week
+    db.one(`SELECT lmp, CASE WHEN lmp IS NULL THEN NULL
+                        ELSE LEAST(42, FLOOR((CURRENT_DATE - lmp) / 7))::int END AS week
             FROM pregnancies WHERE user_id = $1`, [motherId]),
     db.one('SELECT * FROM vitals WHERE user_id = $1 ORDER BY date DESC LIMIT 1', [motherId]),
     symptomModel.all(motherId),

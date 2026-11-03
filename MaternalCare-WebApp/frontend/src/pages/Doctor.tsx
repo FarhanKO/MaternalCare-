@@ -26,7 +26,7 @@ import { PatientFiles } from '@/components/doctor/PatientFiles';
 import { SosBanner } from '@/components/doctor/SosBanner';
 import { cn } from '@/lib/cn';
 import {
-  KIND_META, RISK_META,
+  KIND_META, RISK_META, ageLine, bpLine, joinParts, stageLine,
   type Alert, type Patient, type RiskLevel, type Slot,
 } from '@/data/doctor';
 import { api, type DoctorAnalytics } from '@/lib/api';
@@ -197,7 +197,7 @@ function PatientDrawer({ patient, onClose, onAssign }: { patient: Patient | null
                   <RiskPill level={patient.risk} />
                 </div>
                 <div className="text-[11px] font-semibold text-ink-muted">
-                  {patient.age} yrs · week {patient.week} · {patient.bloodGroup}
+                  {joinParts(ageLine(patient), stageLine(patient), patient.bloodGroup)}
                 </div>
               </div>
             </div>
@@ -237,9 +237,9 @@ function PatientDrawer({ patient, onClose, onAssign }: { patient: Patient | null
             <div className="flex-1 overflow-y-auto px-6 pb-6">
               <div className="mt-4 grid grid-cols-3 gap-2">
                 {[
-                  { l: 'BP', v: `${patient.bp.sys}/${patient.bp.dia}`, i: HeartPulse },
+                  { l: 'BP', v: patient.bp ? `${patient.bp.sys}/${patient.bp.dia}` : '—', i: HeartPulse },
                   { l: 'Score', v: `${patient.score}`, i: Activity },
-                  { l: 'Week', v: `${patient.week}`, i: CalendarDays },
+                  { l: 'Week', v: patient.week != null ? `${patient.week}` : '—', i: CalendarDays },
                 ].map((s) => (
                   <div key={s.l} className="rounded-2xl border border-white/60 bg-white/55 py-3 text-center">
                     <s.i className="mx-auto h-3.5 w-3.5 text-ink-faint" />
@@ -418,6 +418,8 @@ export function Doctor() {
     { name: 'Second', value: analytics.trimesters.second, color: '#45cdd6' },
     { name: 'Third', value: analytics.trimesters.third, color: '#0f97a6' },
   ] : [];
+  // the centre of the trimester ring and its subtitle used to be a typed "38"
+  const pregnantTotal = trimesterSlices.reduce((n, t) => n + t.value, 0);
   const [assigning, setAssigning] = useState<Patient | null>(null);
 
   /*
@@ -495,7 +497,9 @@ export function Doctor() {
       out.push({
         id: `r-${p.id}`, patient: p.name, severity: 'critical', ago: p.lastVisit || 'recently',
         title: `Assessed high risk${p.week ? ` at week ${p.week}` : ''}`,
-        detail: `Latest blood pressure ${p.bp.sys}/${p.bp.dia}. Open her record for the readings behind the score.`,
+        detail: p.bp
+          ? `Latest blood pressure ${p.bp.sys}/${p.bp.dia}. Open her record for the readings behind the score.`
+          : 'No blood pressure logged yet. Open her record for what the score is based on.',
       });
     }
     (p.flags ?? []).forEach((f, i) => {
@@ -535,7 +539,7 @@ export function Doctor() {
   }, [query, riskFilter, roster]);
 
   const KPIS: { key: KpiKey; label: string; value: number; icon: typeof Users; tint: string; note: string }[] = [
-    { key: 'caseload', label: 'Under your care', value: roster.length, icon: Users, tint: P.peach, note: 'active pregnancies' },
+    { key: 'caseload', label: 'Under your care', value: roster.length, icon: Users, tint: P.peach, note: `${roster.filter((p) => p.week != null).length} pregnant · ${roster.filter((p) => p.week == null).length} other` },
     { key: 'high-risk', label: 'High risk', value: riskCount('high'), icon: ShieldAlert, tint: P.rose, note: 'need close follow-up' },
     { key: 'today', label: 'Today’s appointments', value: todaySlots.length, icon: CalendarDays, tint: P.aqua, note: `${pending} still to see` },
     { key: 'alerts', label: 'Open alerts', value: alerts.length, icon: BellRing, tint: P.violet, note: `${critical} critical` },
@@ -550,6 +554,28 @@ export function Doctor() {
 
       <main className="mx-auto max-w-6xl px-4 pb-36 pt-28 sm:pt-32">
         {meId && <SosBanner doctorId={meId} />}
+        {meDoctor && meDoctor.verification && meDoctor.verification !== 'verified' && (
+          <div
+            role="status"
+            className={cn(
+              'mb-6 rounded-2xl border px-5 py-4 text-sm',
+              meDoctor.verification === 'rejected'
+                ? 'border-rose-200 bg-rose-50 text-rose-800'
+                : 'border-amber-200 bg-amber-50 text-amber-900',
+            )}
+          >
+            <div className="font-bold">
+              {meDoctor.verification === 'rejected'
+                ? 'We could not verify your licence'
+                : 'Your licence is being checked'}
+            </div>
+            <div className="mt-1">
+              {meDoctor.verification === 'rejected'
+                ? `${meDoctor.rejectionNote ?? 'Contact support to put it right.'} Mothers cannot find or book you until it is resolved.`
+                : `An admin checks licence ${meDoctor.licenseNo ?? ''} with the medical council before mothers can find or book you. Moderation opens once you are verified.`}
+            </div>
+          </div>
+        )}
         {/* greeting */}
         <Reveal className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -684,7 +710,7 @@ export function Doctor() {
               </Reveal>
 
               <Reveal delay={0.05}>
-                <Card title="Caseload by trimester" sub="38 active pregnancies" icon={Users} tint={P.aqua}>
+                <Card title="Caseload by trimester" sub={`${pregnantTotal} active ${pregnantTotal === 1 ? 'pregnancy' : 'pregnancies'}`} icon={Users} tint={P.aqua}>
                   <div className="flex items-center gap-4">
                     <div className="relative h-[150px] w-[150px] flex-none">
                       <ResponsiveContainer width="100%" height="100%">
@@ -697,7 +723,7 @@ export function Doctor() {
                       </ResponsiveContainer>
                       <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
                         <div>
-                          <div className="text-2xl font-extrabold text-ink">38</div>
+                          <div className="text-2xl font-extrabold text-ink">{pregnantTotal}</div>
                           <div className="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Total</div>
                         </div>
                       </div>
@@ -798,13 +824,13 @@ export function Doctor() {
                         )}
                       </div>
                       <div className="text-[11px] font-medium text-ink-muted">
-                        {p.age} yrs · week {p.week} · next {p.nextVisit}
+                        {joinParts(ageLine(p), stageLine(p), `next ${p.nextVisit}`)}
                       </div>
                     </div>
                     <div className="hidden flex-none items-center gap-3 sm:flex">
                       <div className="text-right">
-                        <div className="text-[13px] font-extrabold tabular-nums text-ink">{p.bp.sys}/{p.bp.dia}</div>
-                        <div className="text-[9px] font-bold uppercase tracking-wider text-ink-faint">mmHg</div>
+                        <div className="text-[13px] font-extrabold tabular-nums text-ink">{p.bp ? `${p.bp.sys}/${p.bp.dia}` : '—'}</div>
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-ink-faint">{p.bp ? 'mmHg' : 'no readings'}</div>
                       </div>
                       <Spark values={p.trend} color={RISK_META[p.risk].color} />
                     </div>
@@ -907,7 +933,7 @@ export function Doctor() {
                           {pt && (
                             <div className="mt-3 flex items-center gap-2">
                               <RiskPill level={pt.risk} />
-                              <span className="text-[11px] font-semibold text-ink-muted">BP {pt.bp.sys}/{pt.bp.dia}</span>
+                              <span className="text-[11px] font-semibold text-ink-muted">BP {bpLine(pt)}</span>
                             </div>
                           )}
                         </button>
@@ -939,7 +965,9 @@ export function Doctor() {
         {/* ============================ MODERATION ============================ */}
         {tab === 'moderation' && (
           <motion.div key="md" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
-            <ModerationQueue doctorId={meId} />
+            {meDoctor && meDoctor.verification !== 'verified'
+              ? <GlassCard className="p-6 text-sm text-ink-muted">Moderation opens once your licence has been verified.</GlassCard>
+              : <ModerationQueue doctorId={meId} />}
           </motion.div>
         )}
 
@@ -995,7 +1023,8 @@ export function Doctor() {
                   <div className="grid gap-3 sm:grid-cols-3">
                     {(['high', 'moderate', 'low'] as RiskLevel[]).map((r) => {
                       const n = riskCount(r);
-                      const pct = Math.round((n / roster.length) * 100);
+                      // an empty caseload printed "NaN% of caseload"
+                      const pct = roster.length ? Math.round((n / roster.length) * 100) : 0;
                       return (
                         <div key={r} className="rounded-2xl border border-white/60 bg-white/55 p-4">
                           <div className="flex items-center justify-between">

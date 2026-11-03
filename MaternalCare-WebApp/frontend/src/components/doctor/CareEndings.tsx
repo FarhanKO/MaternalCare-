@@ -7,7 +7,7 @@ import { ReasonDialog } from '@/components/ui/ReasonDialog';
 import { cn } from '@/lib/cn';
 import { api } from '@/lib/api';
 import { prettyDate, type CareEndingSummary, type CareReason } from '@/data/care';
-import type { Patient } from '@/data/doctor';
+import { stageLine, type Patient } from '@/data/doctor';
 
 /**
  * Who has left this clinician, why, and the control to end it from their side.
@@ -207,7 +207,7 @@ export function CareEndings({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[12.5px] font-bold text-ink">{p.name}</div>
                     <div className="truncate text-[11px] font-semibold text-ink-muted">
-                      Week {p.week} · {p.risk}
+                      {stageLine(p).replace(/^week/, 'Week')} · {p.risk}
                     </div>
                   </div>
                   <button

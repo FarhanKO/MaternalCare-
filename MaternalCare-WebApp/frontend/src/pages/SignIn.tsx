@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Activity, AlertCircle, ArrowLeft, ArrowRight, Check, Mail, Lock, ShieldCheck, KeyRound, Server } from 'lucide-react';
+import { Activity, AlertCircle, ArrowLeft, ArrowRight, Check, Mail, Lock, ShieldCheck, Server } from 'lucide-react';
 import { LiquidButton } from '@/components/ui/LiquidButton';
 import { FloatingInput } from '@/components/ui/FloatingInput';
 import { spring, fadeUp, staggerContainer } from '@/lib/motion';
-import { useAuth } from '@/lib/auth';
+import { portalFor, useAuth } from '@/lib/auth';
 import {
   isNative, normaliseServerUrl, serverLabel, setServerUrl,
 } from '@/lib/native';
@@ -28,10 +28,11 @@ export function SignIn() {
   // reads as though it failed
   const [params] = useSearchParams();
   const justRegistered = params.get('registered') === '1';
+  const justReset = params.get('reset') === '1';
 
   /** Already signed in and arriving here — send her where she was going. */
   useEffect(() => {
-    if (user) navigate(user.role === 'mother' ? '/mother' : '/doctor', { replace: true });
+    if (user) navigate(portalFor(user.role), { replace: true });
   }, [user, navigate]);
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -64,7 +65,7 @@ export function SignIn() {
        * mother's dashboard would only bounce off its guard.
        */
       const back = location.state?.from;
-      navigate(back || (signed.role === 'mother' ? '/mother' : '/doctor'), { replace: true });
+      navigate(back || portalFor(signed.role), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not work — try again');
       setSubmitting(false);
@@ -145,6 +146,16 @@ export function SignIn() {
               Sign in to continue your care journey.
             </motion.p>
 
+            {justReset && (
+              <motion.div
+                variants={fadeUp}
+                role="status"
+                className="mt-6 flex items-start gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800"
+              >
+                <Check className="mt-0.5 h-4 w-4 flex-none" strokeWidth={3} />
+                <span>Your password has been changed. Sign in with the new one.</span>
+              </motion.div>
+            )}
             {justRegistered && (
               <motion.div
                 variants={fadeUp}
@@ -152,8 +163,9 @@ export function SignIn() {
               >
                 <Check className="mt-0.5 h-4 w-4 flex-none" strokeWidth={3} />
                 <span>
-                  You are registered, and you are already listed — mothers can see you
-                  and send you requests from now on.
+                  You are registered. An admin now checks your licence with the medical
+                  council; mothers can find and book you once it is verified. You can sign
+                  in and set up your profile meanwhile.
                 </span>
               </motion.div>
             )}
@@ -195,17 +207,11 @@ export function SignIn() {
                 </div>
               )}
 
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-ink-soft">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-ink/20 text-brand-600 accent-brand-600"
-                  />
-                  Remember me
-                </label>
-                <a href="#" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+              {/* "Remember me" did nothing — sessions already last 14 days — so it is gone */}
+              <div className="flex items-center justify-end pt-1">
+                <Link to="/forgot-password" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
                   Forgot password?
-                </a>
+                </Link>
               </div>
 
               <LiquidButton
@@ -217,18 +223,7 @@ export function SignIn() {
                 {submitting ? 'Signing in…' : 'Sign in'}
               </LiquidButton>
             </motion.form>
-
-            <motion.div variants={fadeUp} className="my-6 flex items-center gap-3">
-              <span className="h-px flex-1 bg-ink/10" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-ink-faint">or</span>
-              <span className="h-px flex-1 bg-ink/10" />
-            </motion.div>
-
-            <motion.div variants={fadeUp}>
-              <LiquidButton variant="glass" size="lg" className="w-full" icon={<KeyRound className="h-[18px] w-[18px]" />}>
-                Continue with single sign-on
-              </LiquidButton>
-            </motion.div>
+            {/* the "single sign-on" button had no action behind it; removed until there is one */}
 
             <motion.p variants={fadeUp} className="mt-8 text-center text-sm text-ink-soft">
               New to MaternalCare+?{' '}

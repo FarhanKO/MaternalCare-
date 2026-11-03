@@ -265,10 +265,12 @@ export interface StageHeroProps {
   vaccinations: Vaccination[];
   locale: string;
   onEditDates: () => void;
+  /** false while her pregnancy is still being fetched */
+  pregnancyLoaded?: boolean;
 }
 
 export function StageHero({
-  stage, pregnancy, child, weightGain, vaccinations, locale, onEditDates,
+  stage, pregnancy, child, weightGain, vaccinations, locale, onEditDates, pregnancyLoaded = true,
 }: StageHeroProps) {
   const now = new Date();
   const month = now.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
@@ -318,6 +320,50 @@ export function StageHero({
           {weightGain
             ? <Tile icon={TrendingUp} label="You have gained" value={`${weightGain.gainedKg} kg`} />
             : <Tile icon={Syringe} label="Next vaccination" value={nextDue ? nextDue.name : '—'} />}
+        </div>
+      </Shell>
+    );
+  }
+
+  /*
+   * Pregnant, but no dates yet — or not loaded yet. Both used to fall through
+   * to the child card at the bottom, so a pregnant mother was told "Growing
+   * up — Add your child".
+   */
+  if (stage === 'pregnant') {
+    return (
+      <Shell
+        stage="pregnant"
+        month={month}
+        days={days}
+        badge="Your pregnancy"
+        footer={pregnancyLoaded ? (
+          <>
+            <div className="text-sm text-white/85">
+              Your week, due date and baby's size are worked out from this one date.
+            </div>
+            <button
+              onClick={onEditDates}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-rose-600 shadow-lg transition hover:bg-white/90"
+            >
+              <CalendarDays className="h-[18px] w-[18px]" /> Add your dates
+            </button>
+          </>
+        ) : null}
+      >
+        <div className="mt-7 text-center" aria-busy={!pregnancyLoaded}>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80">
+            {pregnancyLoaded ? 'One date to go' : 'Loading your pregnancy'}
+          </div>
+          <div className="mt-2 text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">
+            {pregnancyLoaded ? 'When did your last period start?' : '…'}
+          </div>
+          {pregnancyLoaded && (
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-white/90">
+              Add the first day of your last period, or your due date, and this
+              card shows your week, trimester and how many days are left.
+            </p>
+          )}
         </div>
       </Shell>
     );

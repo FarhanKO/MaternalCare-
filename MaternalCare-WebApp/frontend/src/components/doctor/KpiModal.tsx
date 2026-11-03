@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Clock, ShieldAlert, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { RISK_META, type Alert, type Patient, type Slot } from '@/data/doctor';
+import { RISK_META, stageLine, type Alert, type Patient, type Slot } from '@/data/doctor';
 
 export type KpiKey = 'caseload' | 'high-risk' | 'today' | 'alerts';
 
@@ -41,7 +41,7 @@ export function KpiModal({
   const highRisk = roster.filter((p) => p.risk === 'high');
 
   const TITLES: Record<KpiKey, { title: string; sub: string }> = {
-    caseload: { title: 'Under your care', sub: `${roster.length} active pregnancies` },
+    caseload: { title: 'Under your care', sub: `${roster.length} ${roster.length === 1 ? 'patient' : 'patients'}` },
     'high-risk': { title: 'High risk', sub: `${highRisk.length} needing close follow-up` },
     today: {
       title: 'Today’s appointments',
@@ -68,7 +68,7 @@ export function KpiModal({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-bold text-ink">{p.name}</span>
         <span className="block truncate text-[11px] font-semibold text-ink-muted">
-          Week {p.week} · {p.conditions.join(', ') || 'No flags recorded'}
+          {stageLine(p).replace(/^week/, 'Week')} · {p.conditions.join(', ') || 'No flags recorded'}
         </span>
       </span>
       <span className={cn(

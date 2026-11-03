@@ -55,7 +55,10 @@ function riskFor({
  */
 const ROSTER = `
   SELECT u.*,
-         LEAST(42, FLOOR((CURRENT_DATE - p.lmp) / 7))::int AS week,
+         -- LEAST ignores NULLs, so LEAST(42, NULL) is 42: a mother with no
+         -- last-period date showed her doctor "week 42". No date, no week.
+         CASE WHEN p.lmp IS NULL THEN NULL
+              ELSE LEAST(42, FLOOR((CURRENT_DATE - p.lmp) / 7))::int END AS week,
          t.systolics,
          t.diastolics
   FROM users u
@@ -75,9 +78,11 @@ const ROSTER = `
 function toDTO(u, symptoms) {
   const systolics = u.systolics ?? [];
   const diastolics = u.diastolics ?? [];
+  // null when she has logged none — a made-up 118/76 used to read as a
+  // normal measured blood pressure on her doctor's screen
   const latest = {
-    systolic: systolics[systolics.length - 1] ?? 118,
-    diastolic: diastolics[diastolics.length - 1] ?? 76,
+    systolic: systolics.length ? systolics[systolics.length - 1] : null,
+    diastolic: diastolics.length ? diastolics[diastolics.length - 1] : null,
   };
 
   const conditions = (u.conditions || '').split(',').map((c) => c.trim()).filter(Boolean);
@@ -98,7 +103,10 @@ function toDTO(u, symptoms) {
     id: String(u.id),
     name: u.name,
     age: u.age,
-    week: u.week ?? 0,
+    /** null when there is no pregnancy date — never a guessed week */
+    week: u.week ?? null,
+    /** pregnant | new-mother | parent | planning — not everyone on a list is pregnant */
+    stage: u.stage || 'pregnant',
     risk: riskFor({
       sys: latest.systolic, dia: latest.diastolic, conditions: u.conditions, age: u.age, history,
     }),
@@ -111,7 +119,8 @@ function toDTO(u, symptoms) {
       .filter((l) => l.id !== 'allergies'),
     lastVisit: relative(u.last_visit),
     nextVisit: relative(u.next_visit),
-    bp: { sys: latest.systolic, dia: latest.diastolic },
+    /** null until she logs a reading */
+    bp: latest.systolic == null ? null : { sys: latest.systolic, dia: latest.diastolic },
     flags,
     conditions,
     score,

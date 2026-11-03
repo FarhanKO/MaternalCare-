@@ -149,9 +149,16 @@ const check = (label, cond, detail = '') => (cond ? ok(label, detail) : bad(labe
     password: 'probe-password-2026',
     acceptedTerms: '2026-09',
   });
-  check('doctorModel.register writes a usable row',
-    signedUp && signedUp.qualification.includes('FCPS') && signedUp.bookable === true,
-    `${signedUp.name} · ${signedUp.status}`);
+  // a fresh registration waits for an admin: not listed, not bookable
+  check('doctorModel.register writes a pending, unbookable row',
+    signedUp && signedUp.qualification.includes('FCPS') && signedUp.bookable === false
+      && signedUp.verification === 'pending',
+    `${signedUp.name} · ${signedUp.verification}`);
+  const beforeVerify = await doctorModel.recommend({ stage: 'pregnant' });
+  check('  and is not in the ranking until verified',
+    !beforeVerify.some((d) => d.id === signedUp.id), `${beforeVerify.length} ranked`);
+  const verified = await doctorModel.verify(signedUp.id, null);
+  check('  verifying makes it bookable', verified && verified.bookable === true, verified?.verification);
   const afterSignup = await doctorModel.recommend({ stage: 'pregnant' });
   const placed = afterSignup.find((d) => d.id === signedUp.id);
   check('  and appears in the ranking, unrated, without being buried',

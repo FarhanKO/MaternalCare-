@@ -40,16 +40,26 @@ module.exports = {
     return rows.map(toDTO);
   },
 
-  async find(id) {
-    const row = await db.one('SELECT * FROM reminders WHERE id = $1', [id]);
+  /** With `userId`, only her own — another account's reminder is "not found". */
+  async find(id, userId) {
+    const row = userId === undefined
+      ? await db.one('SELECT * FROM reminders WHERE id = $1', [id])
+      : await db.one('SELECT * FROM reminders WHERE id = $1 AND user_id = $2', [id, userId]);
     return row ? toDTO(row) : null;
   },
 
   async create(userId, { kind, title, note, at, repeat = 'once', assignedBy = null }) {
     if (!KINDS.includes(kind)) throw new Error(`Unknown reminder kind: ${kind}`);
     if (!REPEATS.includes(repeat)) throw new Error(`Unknown repeat: ${repeat}`);
-    if (!title || !at) throw new Error('Reminder needs a title and a due time');
-    const titleText = String(title).trim();
+    const titleText = String(title || '').trim();
+    // "   " passed the old check and saved a reminder with no title
+    if (!titleText || !at) throw new Error('Reminder needs a title and a due time');
+    const due = new Date(at);
+    if (Number.isNaN(due.getTime())) throw new Error('That due time is not a real date and time');
+    // a one-off in the past would never fire; a repeating one simply starts there
+    if (repeat === 'once' && due.getTime() < Date.now() - 5 * 60 * 1000) {
+      throw new Error('That time has already passed');
+    }
     const noteText = String(note || '').trim();
     if (titleText.length > 160) throw new Error('Reminder titles must be 160 characters or fewer');
     if (noteText.length > 1000) throw new Error('Reminder notes must be 1,000 characters or fewer');

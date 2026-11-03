@@ -24,6 +24,7 @@ const reportApi = require('../controllers/api/reportApiController');
 const guidanceApi = require('../controllers/api/guidanceApiController');
 const voiceApi = require('../controllers/api/voiceApiController');
 const moderationApi = require('../controllers/api/moderationApiController');
+const adminApi = require('../controllers/api/adminApiController');
 const careEndingApi = require('../controllers/api/careEndingApiController');
 const riskApi = require('../controllers/api/riskApiController');
 const authApi = require('../controllers/api/authApiController');
@@ -52,7 +53,23 @@ const rateLimit = require('../middleware/rateLimit');
  * mother builds, so there was never a caller that needed it without a
  * session, and nothing else should learn the LAN layout from it.
  */
-const PUBLIC = [/^\/auth\//, /^\/guardian\//, /^\/community\/images\//, /^\/doctors\/register$/];
+// GET /doctors is the public directory: the Consultants page showed its live
+// panel only to signed-in users, i.e. never to the visitors it is written for
+const PUBLIC = [/^\/auth\//, /^\/guardian\//, /^\/community\/images\//, /^\/doctors\/register$/, /^\/doctors$/];
+
+/*
+ * Every :id in these routes is a database integer. "abc" used to reach
+ * Postgres and come back as a 500 quoting its own error text.
+ */
+for (const name of ['id', 'doctorId', 'patientId']) {
+  router.param(name, (req, res, next, value) => {
+    const v = String(value);
+    // a signed-in device is named by a hex hash, not a number
+    const sessionKey = req.path.startsWith('/auth/sessions/') && /^[a-f0-9]{16,128}$/.test(v);
+    if (sessionKey || /^\d{1,10}$/.test(v)) return next();
+    return res.status(404).json({ error: 'Not found', code: 'BAD_ID' });
+  });
+}
 
 router.use((req, res, next) => {
   if (req.method === 'OPTIONS') return next();
@@ -72,6 +89,9 @@ router.get('/me/language', sessionApi.language);
    they are the ones that count attempts — see middleware/rateLimit */
 router.post('/auth/login', rateLimit.login, authApi.login);
 router.post('/auth/logout', authApi.logout);
+router.post('/auth/forgot', rateLimit.forgot, authApi.forgotPassword);
+router.get('/auth/reset', rateLimit.reset, authApi.checkReset);
+router.post('/auth/reset', rateLimit.reset, authApi.resetPassword);
 router.get('/auth/session', authApi.session);
 router.post('/auth/register', rateLimit.register, authApi.register);
 router.post('/auth/password', session.requireUser, rateLimit.password, authApi.changePassword);
@@ -177,9 +197,14 @@ router.get('/community/images/:file', communityApi.image);
 router.post('/community/:target/:id/report', communityApi.report);
 
 /* moderation — the clinician's queue */
-router.get('/moderation/reports', session.requireRole('clinician'), moderationApi.queue);
-router.get('/moderation/count', session.requireRole('clinician'), moderationApi.count);
-router.post('/moderation/:target/:id/resolve', session.requireRole('clinician'), moderationApi.resolve);
+router.get('/moderation/reports', session.requireRole('clinician', 'admin'), moderationApi.queue);
+router.get('/moderation/count', session.requireRole('clinician', 'admin'), moderationApi.count);
+router.post('/moderation/:target/:id/resolve', session.requireRole('clinician', 'admin'), moderationApi.resolve);
+
+/* admin — checking a clinician's licence before mothers can book them */
+router.get('/admin/doctors', session.requireRole('admin'), adminApi.doctors);
+router.post('/admin/doctors/:id/verify', session.requireRole('admin'), adminApi.verify);
+router.post('/admin/doctors/:id/reject', session.requireRole('admin'), adminApi.reject);
 
 /* child: growth, milestones, vaccinations — the React client had no route
    to these, so it drew them from hardcoded arrays */

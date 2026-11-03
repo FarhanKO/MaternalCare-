@@ -227,6 +227,11 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'That request was not valid JSON', code: 'BAD_JSON' });
   }
+  // a malformed value that still reached Postgres (invalid_text_representation,
+  // invalid_datetime_format, datetime_field_overflow) is the caller's mistake
+  if (['22P02', '22007', '22008'].includes(err.code)) {
+    return res.status(400).json({ error: 'Something in that request is not in the right format', code: 'BAD_INPUT' });
+  }
   const status = Number(err.status || err.statusCode) || 500;
   if (status >= 500) console.error('[server error]', err);
   const detail = status < 500 || !production;

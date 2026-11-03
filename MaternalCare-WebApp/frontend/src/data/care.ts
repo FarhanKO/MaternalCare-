@@ -26,8 +26,12 @@ export interface Doctor {
   /** 0–1 */
   load: number;
   status: DoctorStatus;
-  /** false when on leave or the list is full */
+  /** false when on leave, the list is full, or the licence is not yet verified */
   bookable: boolean;
+  /** an admin checks the licence before mothers can book */
+  verification?: 'verified' | 'pending' | 'rejected';
+  /** why an admin could not verify — only on the clinician's own record */
+  rejectionNote?: string | null;
   /* present only on the clinician's own record (GET /me/doctor) */
   email?: string | null;
   phone?: string | null;

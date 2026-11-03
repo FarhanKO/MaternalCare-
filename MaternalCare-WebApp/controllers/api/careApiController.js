@@ -212,7 +212,8 @@ exports.cancel = async (req, res, next) => {
     if (err instanceof appointmentModel.NotBookableError) {
       return res.status(400).json({ error: err.message });
     }
-    return next(err);
+    // "That date has passed" and friends are the caller's to fix: 400, not 500
+    return badRequest(res, err, next);
   }
 };
 
@@ -259,7 +260,8 @@ exports.reschedule = async (req, res, next) => {
     if (err instanceof appointmentModel.NotBookableError) {
       return res.status(400).json({ error: err.message });
     }
-    return next(err);
+    // "That date has passed" is hers to fix: 400 with the message, not a 500
+    return badRequest(res, err, next);
   }
 };
 

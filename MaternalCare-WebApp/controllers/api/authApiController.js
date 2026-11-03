@@ -192,6 +192,8 @@ exports.changePassword = async (req, res, next) => {
  * whole internet can. It exists so somebody demonstrating this does not have
  * to memorise four addresses.
  */
+const DEMO_DOMAIN = /@(example\.com|stage\.demo|demo\.maternalcare\.app)$/i;
+
 exports.demoAccounts = async (req, res, next) => {
   try {
     if (process.env.NODE_ENV === 'production') {
@@ -200,11 +202,77 @@ exports.demoAccounts = async (req, res, next) => {
     const mothers = await userModel.mothers();
     return res.json({
       data: mothers
-        .filter((m) => m.email)
+        // only the seeded demo people — this list used to include every real
+        // mother who registered, with her conditions, on any server not
+        // started with NODE_ENV=production
+        .filter((m) => DEMO_DOMAIN.test(m.email || ''))
         .map((m) => ({
           name: m.name, email: m.email, stage: m.stage, conditions: m.conditions || '',
         })),
       meta: { note: 'Demo accounts. Passwords are in the project README.' },
     });
   } catch (err) { return next(err); }
+};
+
+/* --------------------------------------------------------- password reset */
+
+const passwordResetModel = require('../../models/passwordResetModel');
+
+/**
+ * Where the reset link points. PUBLIC_URL when set — never the request's own
+ * Host header in production, which anyone can forge to send a mother a link
+ * to their own site.
+ */
+function siteUrl(req) {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL;
+  if (process.env.NODE_ENV === 'production') {
+    const first = (process.env.CLIENT_ORIGIN || '').split(',')[0].trim();
+    return first || null;
+  }
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+/** POST /auth/forgot { email } — always the same answer, account or not. */
+exports.forgotPassword = async (req, res, next) => {
+  try {
+    const base = siteUrl(req);
+    if (!base) {
+      console.warn('  [reset] PUBLIC_URL is not set — cannot build a reset link');
+    } else {
+      await passwordResetModel.request(req.body?.email, base);
+    }
+    return res.json({
+      data: {
+        sent: true,
+        message: `If that email has an account, a reset link is on its way. It works for ${passwordResetModel.TTL_MINUTES} minutes.`,
+      },
+    });
+  } catch (err) { return next(err); }
+};
+
+/** GET /auth/reset?token= — lets the page say "expired" before she types a password. */
+exports.checkReset = async (req, res, next) => {
+  try {
+    const valid = await passwordResetModel.check(String(req.query.token || ''));
+    if (!valid) {
+      return res.status(400).json({ error: 'This reset link has expired or was already used. Ask for a new one.', code: 'BAD_TOKEN' });
+    }
+    return res.json({ data: { valid: true } });
+  } catch (err) { return next(err); }
+};
+
+/** POST /auth/reset { token, password } — sets it, then she signs in fresh. */
+exports.resetPassword = async (req, res, next) => {
+  try {
+    await passwordResetModel.confirm(String(req.body?.token || ''), req.body?.password);
+    return res.json({ data: { reset: true } });
+  } catch (err) {
+    if (err instanceof passwordResetModel.ResetError) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    if (err instanceof authModel.AuthError) {
+      return res.status(400).json({ error: err.message, code: err.code, field: 'password' });
+    }
+    return next(err);
+  }
 };

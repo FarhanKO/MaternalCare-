@@ -90,9 +90,21 @@ const rootCert = process.env.PGSSLROOTCERT && fs.existsSync(process.env.PGSSLROO
   ? fs.readFileSync(process.env.PGSSLROOTCERT).toString()
   : null;
 
+/*
+ * A Postgres on this machine (local development, CI) usually has no TLS at
+ * all, and forcing it made the app impossible to run against one. Set
+ * PGSSLMODE=disable, or point DATABASE_URL at localhost, to connect in plain.
+ */
+const localDb = (() => {
+  try { return ['localhost', '127.0.0.1', '::1'].includes(new URL(process.env.DATABASE_URL || '').hostname); }
+  catch { return false; }
+})();
+const noTls = process.env.PGSSLMODE === 'disable' || localDb;
+
 const pool = new Pool({
   ...connectionConfig(),
-  ssl: rootCert ? { ca: rootCert, rejectUnauthorized: true } : { rejectUnauthorized: false },
+  ssl: noTls ? false
+    : rootCert ? { ca: rootCert, rejectUnauthorized: true } : { rejectUnauthorized: false },
   // Sydney is ~200ms away, so a handful of warm connections beats reconnecting
   max: Number(process.env.PGPOOL_MAX) || 10,
   idleTimeoutMillis: 30_000,

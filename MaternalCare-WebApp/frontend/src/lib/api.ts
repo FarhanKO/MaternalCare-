@@ -171,6 +171,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 interface Envelope<T> { data: T }
 
+/** A clinician as the admin page sees them, with contact details and licence. */
+export interface AdminDoctor extends Doctor {
+  email: string | null;
+  phone: string | null;
+  licenseNo: string | null;
+  verifiedAt: string | null;
+  rejectedAt: string | null;
+  rejectionNote: string | null;
+}
+
 export type LifeStage = 'pregnant' | 'new-mother' | 'parent' | 'planning' | 'general';
 
 /** Practice analytics, every figure counted from the clinician's caseload. */
@@ -288,6 +298,40 @@ export const api = {
     ).then((r) => r.data),
 
   /* the signed-in user */
+  /* --------------------------------------------------- password reset */
+
+  /** Same answer whether or not the email has an account. */
+  forgotPassword: (email: string) =>
+    request<Envelope<{ sent: boolean; message: string }>>('/auth/forgot', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }).then((r) => r.data),
+
+  checkResetToken: (token: string) =>
+    request<Envelope<{ valid: boolean }>>(`/auth/reset?token=${encodeURIComponent(token)}`).then((r) => r.data),
+
+  resetPassword: (token: string, password: string) =>
+    request<Envelope<{ reset: boolean }>>('/auth/reset', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }).then((r) => r.data),
+
+  /* ---------------------------------------------------- admin: licences */
+
+  adminDoctors: (state: 'pending' | 'verified' | 'rejected' | 'all' = 'pending') =>
+    request<Envelope<AdminDoctor[]> & { meta: { state: string; pending: number } }>(
+      `/admin/doctors?state=${state}`,
+    ).then((r) => ({ doctors: r.data, pending: r.meta.pending })),
+
+  verifyDoctor: (id: string) =>
+    request<Envelope<Doctor>>(`/admin/doctors/${id}/verify`, { method: 'POST', body: '{}' }).then((r) => r.data),
+
+  rejectDoctor: (id: string, note: string) =>
+    request<Envelope<Doctor>>(`/admin/doctors/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }).then((r) => r.data),
+
   getMe: () => request<Envelope<{ user: { name: string; stage: LifeStage } }>>('/me').then((r) => r.data.user),
 
   /**
@@ -365,6 +409,8 @@ export const api = {
 
   registerMother: (body: {
     name: string; email: string; phone?: string; password: string; stage: LifeStage;
+    /** YYYY-MM-DD, pregnant only — becomes her LMP (due date − 280 days) */
+    dueDate?: string;
     /** the version of the terms that was on the screen when she agreed */
     acceptedTerms: string;
   }) =>

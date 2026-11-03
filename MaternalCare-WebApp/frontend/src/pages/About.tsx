@@ -51,7 +51,19 @@ const VALUES = [
 
 const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 
+/**
+ * The hero video is 3.5 MB. On a phone with Data Saver on, or for someone who
+ * asked for reduced motion, the poster stands in for it.
+ */
+function wantsHeroVideo() {
+  if (typeof window === 'undefined') return false;
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  return !saveData && !still;
+}
+
 export function About() {
+  const playVideo = useRef(wantsHeroVideo()).current;
   const navigate = useNavigate();
   const sectionRef = useRef<HTMLElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -119,9 +131,10 @@ export function About() {
               <div className="relative overflow-hidden rounded-[2rem] border border-white/50 shadow-glass sm:rounded-[2.75rem]">
                 <video
                   className="absolute inset-0 h-full w-full object-cover"
-                  src="/media/laughing-child.mp4"
-                  poster="/hero/doctor-baby.jpg"
-                  autoPlay
+                  src={playVideo ? '/media/laughing-child.mp4' : undefined}
+                  // doctor-baby.jpg was deleted from public/hero and this 404'd
+                  poster="/hero/slide1.jpg"
+                  autoPlay={playVideo}
                   muted
                   loop
                   playsInline

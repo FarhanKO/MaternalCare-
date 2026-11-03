@@ -122,10 +122,13 @@ async function nextOpenings(doctorId, fromDate, days = 14, limit = 6) {
  */
 async function ensureSlotFree(doctorId, date, time) {
   const doctor = await doctorModel.find(doctorId);
-  if (!doctor) throw new NotBookableError('That clinician is no longer listed');
+  if (!doctor || doctor.verification !== 'verified') throw new NotBookableError('That clinician is no longer listed');
   if (doctor.status === 'away') throw new NotBookableError(`${doctor.name} is on leave right now`);
   if (!doctor.bookable) throw new NotBookableError(`${doctor.name}'s list is full`);
   if (!date || !time) throw new Error('A booking needs a date and a time');
+  // "25:99" or "3am" used to be told "That time has just been taken"
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error('That is not a valid date');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(time))) throw new Error('That is not a valid time');
   if (date < todayISO()) throw new Error('That date has passed');
 
   const free = await freeSlots(doctorId, date);

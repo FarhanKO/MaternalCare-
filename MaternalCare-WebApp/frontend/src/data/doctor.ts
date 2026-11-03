@@ -3,14 +3,18 @@ export type RiskLevel = 'low' | 'moderate' | 'high';
 export interface Patient {
   id: string;
   name: string;
-  age: number;
-  week: number;
+  /** null when she has not given it */
+  age: number | null;
+  /** gestational week; null when there is no pregnancy date */
+  week: number | null;
+  /** her life stage — three of the four are not a pregnancy */
+  stage?: 'pregnant' | 'new-mother' | 'parent' | 'planning' | 'general';
   risk: RiskLevel;
   bloodGroup: string;
   lastVisit: string;
   nextVisit: string;
-  /** most recent blood pressure reading */
-  bp: { sys: number; dia: number };
+  /** most recent blood pressure reading; null until she logs one */
+  bp: { sys: number; dia: number } | null;
   /** flags raised by the mother's own logging */
   flags: string[];
   conditions: string[];
@@ -85,3 +89,31 @@ export interface Alert {
  * estimated — invented birth outcomes on a clinician's screen are worse than
  * an empty panel, not better.
  */
+
+const STAGE_WORD: Record<string, string> = {
+  'new-mother': 'New mother',
+  parent: 'Parent',
+  planning: 'Planning',
+  general: 'General',
+};
+
+/** "week 29", "Parent", or "Pregnant · no dates yet" — never an invented week. */
+export function stageLine(p: Pick<Patient, 'week' | 'stage'>): string {
+  if (p.week != null) return `week ${p.week}`;
+  if (!p.stage || p.stage === 'pregnant') return 'Pregnant · no dates yet';
+  return STAGE_WORD[p.stage] ?? p.stage;
+}
+
+/** "28 yrs", or nothing when she has not said. */
+export function ageLine(p: Pick<Patient, 'age'>): string {
+  return p.age != null ? `${p.age} yrs` : '';
+}
+
+/** "120/80", or "No readings yet" — the fallback 118/76 read as a real reading. */
+export function bpLine(p: Pick<Patient, 'bp'>): string {
+  return p.bp ? `${p.bp.sys}/${p.bp.dia}` : 'No readings yet';
+}
+
+/** Parts joined with " · ", leaving out the empty ones. */
+export const joinParts = (...parts: (string | null | undefined | false)[]) =>
+  parts.filter(Boolean).join(' · ');

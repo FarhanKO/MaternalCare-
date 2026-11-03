@@ -22,10 +22,19 @@ interface Ctx {
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   refresh: () => void;
+  /**
+   * Adopt an account the server has just signed in some other way —
+   * registration answers with the user and its session, exactly as login
+   * does, but without this the app still thought nobody was signed in.
+   */
   acceptSession: (user: AuthUser) => void;
 }
 
 const AuthContext = createContext<Ctx | null>(null);
+
+/** Where each kind of account lands after signing in. */
+export const portalFor = (role: string) =>
+  role === 'mother' ? '/mother' : role === 'admin' ? '/admin' : '/doctor';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -45,10 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
     return u;
   }, []);
+
   const acceptSession = useCallback((u: AuthUser) => {
     setUser(u);
     setLoading(false);
   }, []);
+
   const signOut = useCallback(async () => {
     try {
       await api.logout();

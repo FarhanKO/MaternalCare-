@@ -479,7 +479,7 @@ export function Mother() {
   /** the daily check-in sheet — opened from the bell or from "View all" */
   const [checkInOpen, setCheckInOpen] = useState(false);
   // one source for "what week is she in" — every mention below reads this
-  const { pregnancy } = usePregnancy();
+  const { pregnancy, loaded: pregnancyLoaded } = usePregnancy();
 
   /*
    * The child's numbers for today.
@@ -671,7 +671,8 @@ export function Mother() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
               </span>
-              <span className="hidden sm:inline">{liveAlert ? 'Alert active' : 'SOS'}</span>
+              {/* the word stays at every width — on a phone this was an unlabeled red dot */}
+              <span>{liveAlert ? <><span className="sm:hidden">Active</span><span className="hidden sm:inline">Alert active</span></> : 'SOS'}</span>
             </motion.button>
 
             <motion.button
@@ -706,6 +707,7 @@ export function Mother() {
           <StageHero
             stage={profile.stage}
             pregnancy={pregnancy}
+            pregnancyLoaded={pregnancyLoaded}
             child={childState}
             weightGain={vitals.weightGain}
             vaccinations={vaccinations}

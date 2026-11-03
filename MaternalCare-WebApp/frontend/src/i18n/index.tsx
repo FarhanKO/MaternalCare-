@@ -73,7 +73,9 @@ function initialLang(): Lang {
   if (typeof window === 'undefined') return 'en';
   const stored = window.localStorage.getItem(STORAGE_KEY);
   if (stored === 'en' || stored === 'bn') return stored;
-  return navigator.language?.toLowerCase().startsWith('bn') ? 'bn' : 'en';
+  // English until she picks Bangla: most screens are not translated yet, and
+  // a Bangla browser used to land in a half-English mode with no way out
+  return 'en';
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {

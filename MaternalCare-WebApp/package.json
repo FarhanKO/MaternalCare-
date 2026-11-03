@@ -22,7 +22,8 @@
     "ml:test": "node ml-service/run.js -m pytest train/test_service.py -q",
     "db:stages": "node db/seed-stages.js",
     "db:passwords": "node db/seed-passwords.js",
-    "db:purge": "node db/purge-deleted.js"
+    "db:purge": "node db/purge-deleted.js",
+    "admin:create": "node db/create-admin.js"
   },
   "dependencies": {
     "express": "^4.21.2",

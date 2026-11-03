@@ -70,6 +70,15 @@ services:
         sync: false
       - key: VAPID_SUBJECT
         value: mailto:hello@maternalcare.app
+      # password reset emails (config/mail.js). PUBLIC_URL is where the
+      # emailed link points — never taken from the request in production.
+      - key: PUBLIC_URL
+        value: https://maternalcare-l9mp.onrender.com
+      - key: RESEND_API_KEY
+        sync: false
+      # a sender on a domain you have verified in Resend
+      - key: MAIL_FROM
+        sync: false
       # optional — the FastAPI classifier, if it is deployed as its own service
       # (see ml-service/README.md). Unset, the risk screen uses the rule engine.
       # - key: ML_SERVICE_URL

@@ -22,13 +22,33 @@ const MAX_AVATAR_BYTES = 3 * 1024 * 1024;
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 const MAX_BIO = 280;
 
+/**
+ * A due date → the last-period date it implies (280 days earlier), checked
+ * the same way onboarding checks an LMP: not in the future, not more than
+ * 44 weeks ago.
+ */
+function lmpFromDueDate(dueDate) {
+  const fail = (message) => {
+    const err = new Error(message); err.code = 'INVALID_REGISTRATION'; err.field = 'dueDate'; return err;
+  };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate))) throw fail('That due date is not a real date');
+  const due = new Date(`${dueDate}T00:00:00Z`);
+  if (Number.isNaN(due.getTime())) throw fail('That due date is not a real date');
+  const lmp = new Date(due.getTime() - 280 * 86400000);
+  const daysAgo = Math.floor((Date.now() - lmp.getTime()) / 86400000);
+  if (daysAgo < 0) throw fail('That due date is more than 40 weeks away — please check it');
+  if (daysAgo > 308) throw fail('That due date has already passed by more than a month — please check it');
+  return lmp.toISOString().slice(0, 10);
+}
+
 module.exports = {
-  async registerMother({ name, email, phone, password, stage, acceptedTerms } = {}) {
+  async registerMother({ name, email, phone, password, stage, dueDate, acceptedTerms } = {}) {
     const cleanName = String(name || '').trim();
     const termsVersion = this.termsVersionFrom(acceptedTerms);
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').trim();
-    const cleanStage = String(stage || 'pregnant').trim();
+    // no silent default: a blank answer used to make every such account pregnant
+    const cleanStage = String(stage || '').trim();
     if (cleanName.length < 2 || cleanName.length > 60) {
       const err = new Error('Please give your full name'); err.code = 'INVALID_REGISTRATION'; err.field = 'name'; throw err;
     }
@@ -41,6 +61,8 @@ module.exports = {
     if (cleanPhone && cleanPhone.replace(/\D/g, '').length < 6) {
       const err = new Error('Please give a valid phone number'); err.code = 'INVALID_REGISTRATION'; err.field = 'phone'; throw err;
     }
+    // her due date, as the LMP the whole pregnancy is computed from
+    const lmp = cleanStage === 'pregnant' && dueDate ? lmpFromDueDate(dueDate) : null;
     const passwordHash = await authModel.hash(String(password || ''));
     try {
       const row = await db.insert(
@@ -49,6 +71,9 @@ module.exports = {
          VALUES ($1, 'mother', $2, $3, $4, $5, $6, now()) RETURNING *`,
         [cleanName, cleanEmail, cleanPhone || null, cleanStage, passwordHash, termsVersion],
       );
+      if (lmp) {
+        await db.run('INSERT INTO pregnancies (user_id, lmp) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET lmp = EXCLUDED.lmp', [row.id, lmp]);
+      }
       return row;
     } catch (err) {
       if (err.code === '23505') {

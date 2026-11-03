@@ -12,6 +12,18 @@ const THRESHOLDS = {
 };
 
 function validateReading({ systolic, diastolic, sugar, weight_kg, temp_c, fetal_bpm }) {
+  // "abc" became NaN, slipped past every range check and crashed the insert
+  const named = {
+    systolic: 'Systolic BP', diastolic: 'Diastolic BP', sugar: 'Glucose',
+    weight_kg: 'Weight', temp_c: 'Temperature', fetal_bpm: 'Fetal heart rate',
+  };
+  for (const [k, v] of Object.entries({ systolic, diastolic, sugar, weight_kg, temp_c, fetal_bpm })) {
+    if (v != null && !Number.isFinite(v)) throw new Error(`${named[k]} must be a number`);
+  }
+  // 80/120 was saved as a real reading and fed the trends and the risk score
+  if (systolic != null && diastolic != null && diastolic >= systolic) {
+    throw new Error('The lower number (diastolic) must be below the upper number (systolic)');
+  }
   if (systolic != null && (systolic < 50 || systolic > 250)) {
     throw new Error('Systolic BP must be between 50 and 250 mmHg');
   }
@@ -31,6 +43,19 @@ function validateReading({ systolic, diastolic, sugar, weight_kg, temp_c, fetal_
   if (fetal_bpm != null && (fetal_bpm < 60 || fetal_bpm > 240)) {
     throw new Error('Fetal heart rate must be between 60 and 240 bpm');
   }
+}
+
+/** YYYY-MM-DD, a real day, not after today — a reading "from 2030" skewed every chart. */
+function validateDate(date) {
+  if (date === undefined || date === null || date === '') return;
+  const v = String(date);
+  const d = new Date(`${v}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) {
+    throw new Error('The date must be a real day, as YYYY-MM-DD');
+  }
+  // a day of slack for time zones: Dhaka is ahead of the server's UTC clock
+  if (d.getTime() > Date.now() + 86400000) throw new Error('A reading cannot be dated in the future');
+  if (d.getTime() < Date.now() - 2 * 365 * 86400000) throw new Error('That date is more than two years ago — please check it');
 }
 
 module.exports = {
@@ -83,6 +108,7 @@ module.exports = {
     validateReading({
       systolic, diastolic, sugar, weight_kg, temp_c, fetal_bpm,
     });
+    validateDate(date);
     return db.insert(
       `INSERT INTO vitals (user_id, date, systolic, diastolic, sugar, weight_kg, temp_c, fetal_bpm)
        VALUES ($1, COALESCE($2, CURRENT_DATE), $3,$4,$5,$6,$7,$8)

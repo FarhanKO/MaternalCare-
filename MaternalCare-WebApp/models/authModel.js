@@ -48,6 +48,13 @@ const SESSION_IDLE = { clinician: '12 hours', default: '7 days' };
 /** last_seen_at is written at most this often, not on every request. */
 const TOUCH_EVERY = '5 minutes';
 const MAX_PASSWORD_LENGTH = 200;
+
+/** The passwords tried first by anyone guessing; refused outright. */
+const COMMON_PASSWORDS = new Set([
+  'password1', 'password123', 'passw0rd', 'qwerty123', 'qwertyuiop', 'abc12345', 'abcd1234',
+  '1q2w3e4r', '1qaz2wsx', 'iloveyou1', 'welcome1', 'welcome123', 'admin123', 'letmein1',
+  'p@ssw0rd', 'p@ssword', 'bangladesh1', 'dhaka1234', 'mother123', 'baby1234',
+]);
 const MAX_EMAIL_LENGTH = 254;
 
 /**
@@ -111,6 +118,14 @@ module.exports = {
       // scrypt cost is independent of input length, but an unbounded body is
       // still a way to make the server do unbounded work
       throw new AuthError('That password is too long', 'TOO_LONG');
+    }
+    // "password" and "12345678" used to pass; they are the first two any
+    // guesser tries
+    if (!/[A-Za-z]/.test(password) || !/[^A-Za-z]/.test(password)) {
+      throw new AuthError('Use at least one letter and one number or symbol', 'WEAK');
+    }
+    if (COMMON_PASSWORDS.has(password.toLowerCase())) {
+      throw new AuthError('That password is too easy to guess — choose another', 'WEAK');
     }
     const salt = randomBytes(16);
     const key = await scryptAsync(password, salt, KEY_LEN, { ...PARAMS, maxmem: maxmem() });

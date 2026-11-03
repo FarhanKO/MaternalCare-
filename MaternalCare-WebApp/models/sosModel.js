@@ -131,6 +131,11 @@ module.exports = {
     if (relationText.length > 40) throw new Error('Guardian relationships must be 40 characters or fewer');
     const phoneText = String(phone || '').trim();
     if (phoneText.length > 40) throw new Error('Guardian phone numbers must be 40 characters or fewer');
+    // an SOS contact with no number, or "hello", is someone nobody can call
+    const digits = phoneText.replace(/\D/g, '');
+    if (digits.length < 6 || digits.length > 15 || /[^\d\s()+.-]/.test(phoneText)) {
+      throw new Error('A guardian needs a phone number that can be called, e.g. +880 1711-000000');
+    }
 
     const row = await db.insert(
       `INSERT INTO emergency_contacts (user_id, name, relation, phone, access_token)

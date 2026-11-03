@@ -30,7 +30,7 @@ export const en = {
   /* ---------------------------------------------------------- language */
   'lang.title': 'Language',
   'lang.choose': 'Choose your language',
-  'lang.partial': 'Bangla covers the screens you use most. Anything not yet translated stays in English.',
+  'lang.partial': 'Bangla is in beta: menus, dates and some labels are translated; the rest stays in English for now.',
   'lang.saving': 'Saving…',
 
   /* --------------------------------------------------------- mother nav */

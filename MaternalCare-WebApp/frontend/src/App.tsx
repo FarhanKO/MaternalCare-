@@ -25,6 +25,10 @@ const Trends = lazy(() => import('@/pages/Trends').then((m) => ({ default: m.Tre
 const RemindersPage = lazy(() => import('@/pages/RemindersPage').then((m) => ({ default: m.RemindersPage })));
 const CommunityPage = lazy(() => import('@/pages/CommunityPage').then((m) => ({ default: m.CommunityPage })));
 const Terms = lazy(() => import('@/pages/Terms'));
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword').then((m) => ({ default: m.ForgotPassword })));
+const ResetPassword = lazy(() => import('@/pages/ResetPassword').then((m) => ({ default: m.ResetPassword })));
+const Admin = lazy(() => import('@/pages/Admin').then((m) => ({ default: m.Admin })));
+const NotFound = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFound })));
 
 const LOADER_COPY: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Welcome to MaternalCare+', subtitle: 'Setting up a calmer way to care' },
@@ -58,6 +62,8 @@ export default function App() {
           <Route path="/" element={isNative ? <AppHome /> : <Landing />} />
           <Route path="/signin" element={<SignIn />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/onboarding" element={<RequireAuth role="mother"><Onboarding /></RequireAuth>} />
           <Route path="/about" element={<About />} />
           <Route path="/health-plan" element={<HealthPlan />} />
@@ -77,6 +83,8 @@ export default function App() {
             element={<RequireAuth role="clinician"><Doctor /></RequireAuth>}
           />
           <Route path="/appoint" element={<RequireAuth role="mother"><Appoint /></RequireAuth>} />
+          <Route path="/admin" element={<RequireAuth role="admin"><Admin /></RequireAuth>} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
       </div>

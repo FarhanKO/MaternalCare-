@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { spring } from '@/lib/motion';
 import { isNative } from '@/lib/native';
+import { LanguageSwitch } from '@/components/ui/LanguageSwitch';
 
 interface NavLink {
   label: string;
@@ -41,7 +42,7 @@ export function Navbar() {
    * account: her portal and a sign-out, or the two calls to action.
    */
   const { user, signOut } = useAuth();
-  const portal = user?.role === 'clinician' ? '/doctor' : '/mother';
+  const portal = user?.role === 'clinician' ? '/doctor' : user?.role === 'admin' ? '/admin' : '/mother';
   const onPortal = location.pathname === portal;
   const leave = async () => {
     setOpen(false);
@@ -146,6 +147,7 @@ export function Navbar() {
         </div>
 
         <div className="ml-auto hidden items-center gap-2 lg:ml-2 lg:flex">
+          <LanguageSwitch />
           {!isNative && (
             <div ref={appsRef} className="relative">
               <button
@@ -240,6 +242,9 @@ export function Navbar() {
                   {l.label}
                 </button>
               ))}
+              <div className="mt-1 border-t border-white/60 px-4 pt-2">
+                <LanguageSwitch />
+              </div>
               {!isNative && (
                 <div className="mt-1 border-t border-white/60 pt-2">
                   <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
