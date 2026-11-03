@@ -24,6 +24,7 @@ import { GlassDatePicker } from '@/components/ui/GlassDatePicker';
 import { cn } from '@/lib/cn';
 import { spring, fadeUp } from '@/lib/motion';
 import { api, FieldError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { TermsModal } from '@/components/ui/TermsModal';
 import { TERMS_VERSION, type TermsPart } from '@/data/terms';
 
@@ -66,6 +67,7 @@ export function Register() {
   const [fieldError, setFieldError] = useState<{ field?: string; message: string } | null>(null);
 
   const navigate = useNavigate();
+  const { acceptSession } = useAuth();
   const accent = ROLE_ACCENT[role];
   const theme = THEME[role];
   const isPregnant = stage.toLowerCase().includes('pregnant');
@@ -111,11 +113,12 @@ export function Register() {
       };
       setSubmitting(true);
       try {
-        await api.registerMother({
+        const user = await api.registerMother({
           name: value('m-name'), email: value('m-email'), phone: value('m-phone'),
           password: value('m-password'), stage: stageMap[stage] || 'pregnant',
           acceptedTerms: TERMS_VERSION,
         });
+        acceptSession(user);
         navigate(`/onboarding?stage=${encodeURIComponent(stage || 'Pregnant')}`);
       } catch (err) {
         setFieldError({
