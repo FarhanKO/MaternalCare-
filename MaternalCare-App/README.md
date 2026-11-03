@@ -1,6 +1,6 @@
 # MaternalCare+ — the Android app
 
-Part of [MaternalCare+](../../README.md). The same React client that the
+The same React client that the
 website serves ([`frontend/`](../README.md)) is wrapped by
 [Capacitor](https://capacitorjs.com) into an APK a mother or a clinician
 installs. **Nothing is written twice**: every screen, every tab and every
