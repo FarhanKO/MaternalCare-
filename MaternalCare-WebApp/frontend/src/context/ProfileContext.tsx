@@ -87,7 +87,18 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   // bumped by reload(); the effect below depends on it
   const [generation, setGeneration] = useState(0);
-
+  
+  // Switch the profile to the new user during render, not in an effect,
+  // so the pregnancy dashboard is never painted for a non-pregnant user.
+  const uid = user?.id ?? null;
+  const [owner, setOwner] = useState<string | null>(null);
+  if (uid !== owner) {
+    setOwner(uid);
+    setLoaded(false);
+    setProfile(user
+      ? { ...EMPTY, name: user.name, stage: (user.stage as LifeStage) ?? EMPTY.stage }
+      : EMPTY);
+  }
   /*
    * Keyed on who is signed in, not on mount.
    *
@@ -99,21 +110,10 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
    * mother's pregnancy.
    */
   useEffect(() => {
-    if (!user) {
-      setProfile(EMPTY);
-      setLoaded(false);
-      return undefined;
-    }
+        if (!user) return undefined;
 
     let cancelled = false;
     setLoaded(false);
-    // the session already knows her name and her stage, so no frame of the
-    // page is ever addressed to the wrong woman while the record loads
-    setProfile({
-      ...EMPTY,
-      name: user.name,
-      stage: (user.stage as LifeStage) ?? EMPTY.stage,
-    });
 
     Promise.all([
       api.getProfile(),
